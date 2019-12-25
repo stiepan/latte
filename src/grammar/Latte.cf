@@ -1,94 +1,93 @@
 -- programs ------------------------------------------------
 
 entrypoints Program ;
-
 Program.   Program ::= [TopDef] ;
 
-FnDef.	   TopDef ::= Type Ident "(" [Arg] ")" Block ;
+-- tokens --------------------------------------------------
 
+position token PIdent (letter (letter | digit | '_' | '\'' )*);
+
+position token PInteger (digit+);
+position token PTrue {"true"} ;
+position token PFalse {"false"} ;
+position token PString '"' ((char - ["\"\\"]) | ('\\' ["\"\\nt"]))* '"' ;
+position token PNeg {"-"} ;
+position token PNot {"!"} ;
+position token PAnd {"&&"} ;
+position token POr {"||"} ;
+position token PPlus {"+"} ;
+position token PMinus {"-"} ;
+position token PTimes {"*"} ;
+position token PDiv {"/"} ;
+position token PMod {"%"} ;
+position token PLTH {"<"} ;
+position token PLE {"<="} ;
+position token PGTH {">"} ;
+position token PGE {">="} ;
+position token PEQU {"=="} ;
+position token PNE {"!="} ;
+
+position token POpenBlock {"{"} ;
+position token PCloseBlock {"}"} ;
+position token PSemicolon {";"} ;
+position token PIf {"if"} ;
+position token PElse {"else"} ;
+position token PWhile {"while"} ;
+position token PReturn {"return"} ;
+
+-- functions -----------------------------------------------
+
+FnDef.	   TopDef ::= Type PIdent "(" [Arg] ")" Block ;
 separator nonempty TopDef "" ;
-
-Arg. 	   Arg ::= Type Ident;
-
+Arg. 	   Arg ::= Type PIdent;
 separator  Arg "," ;
 
 -- statements ----------------------------------------------
 
-Block.     Block ::= "{" [Stmt] "}" ;
-
+Block.     Block ::= POpenBlock [Stmt] PCloseBlock ;
 separator  Stmt "" ;
-
-Empty.     Stmt ::= ";" ;
-
+Empty.     Stmt ::= PSemicolon ;
 BStmt.     Stmt ::= Block ;
-
-Decl.      Stmt ::= Type [Item] ";" ;
-
-NoInit.    Item ::= Ident ; 
-
-Init.      Item ::= Ident "=" Expr ;
-
+Decl.      Stmt ::= Type [Item] PSemicolon ;
+NoInit.    Item ::= PIdent ;
+Init.      Item ::= PIdent "=" Expr ;
 separator nonempty Item "," ;
-
-Ass.       Stmt ::= Ident "=" Expr  ";" ;
-
-Incr.      Stmt ::= Ident "++"  ";" ;
-
-Decr.      Stmt ::= Ident "--"  ";" ;
-
-Ret.       Stmt ::= "return" Expr ";" ;
-
-VRet.      Stmt ::= "return" ";" ;
-
-Cond.      Stmt ::= "if" "(" Expr ")" Stmt  ;
-
-CondElse.  Stmt ::= "if" "(" Expr ")" Stmt "else" Stmt  ;
-
-While.     Stmt ::= "while" "(" Expr ")" Stmt ;
-
-SExp.      Stmt ::= Expr  ";" ;
+Ass.       Stmt ::= PIdent "=" Expr PSemicolon ;
+Incr.      Stmt ::= PIdent "++" PSemicolon ;
+Decr.      Stmt ::= PIdent "--" PSemicolon ;
+Ret.       Stmt ::= PReturn Expr PSemicolon ;
+VRet.      Stmt ::= PReturn PSemicolon ;
+Cond.      Stmt ::= PIf "(" Expr ")" Stmt  ;
+CondElse.  Stmt ::= PIf "(" Expr ")" Stmt PElse Stmt  ;
+While.     Stmt ::= PWhile "(" Expr ")" Stmt ;
+SExp.      Stmt ::= Expr PSemicolon ;
 
 -- Types ---------------------------------------------------
 
 Int.       Type ::= "int" ;
-
 Str.       Type ::= "string" ;
-
 Bool.      Type ::= "boolean" ;
-
 Void.      Type ::= "void" ;
-
 internal   Fun. Type ::= Type "(" [Type] ")" ;
 
 separator  Type "," ;
 
 -- Expressions ---------------------------------------------
 
-EVar.      Expr6 ::= Ident ;
-
-ELitInt.   Expr6 ::= Integer ;
-
-ELitTrue.  Expr6 ::= "true" ;
-
-ELitFalse. Expr6 ::= "false" ;
-
-EApp.      Expr6 ::= Ident "(" [Expr] ")" ;
-
-EString.   Expr6 ::= String ;
-
-Neg.       Expr5 ::= "-" Expr6 ;
-
-Not.       Expr5 ::= "!" Expr6 ;
+EVar.      Expr6 ::= PIdent ;
+ELitInt.   Expr6 ::= PInteger ;
+ELitTrue.  Expr6 ::= PTrue ;
+ELitFalse. Expr6 ::= PFalse ;
+EApp.      Expr6 ::= PIdent "(" [Expr] ")" ;
+EString.   Expr6 ::= PString ;
+Neg.       Expr5 ::= PNeg Expr6 ;
+Not.       Expr5 ::= PNot Expr6 ;
 
 EMul.      Expr4 ::= Expr4 MulOp Expr5 ;
-
 EAdd.      Expr3 ::= Expr3 AddOp Expr4 ;
-
 ERel.      Expr2 ::= Expr2 RelOp Expr3 ;
-
-EAnd.      Expr1 ::= Expr2 "&&" Expr1 ;
-
-EOr.       Expr ::= Expr1 "||" Expr ;
+EAnd.      Expr1 ::= Expr2 PAnd Expr1 ;
+EOr.       Expr ::= Expr1 POr Expr ;
 
 coercions  Expr 6 ;
 
@@ -96,27 +95,17 @@ separator  Expr "," ;
 
 -- operators -----------------------------------------------
 
-Plus.      AddOp ::= "+" ;
-
-Minus.     AddOp ::= "-" ;
-
-Times.     MulOp ::= "*" ;
-
-Div.       MulOp ::= "/" ;
-
-Mod.       MulOp ::= "%" ;
-
-LTH.       RelOp ::= "<" ;
-
-LE.        RelOp ::= "<=" ;
-
-GTH.       RelOp ::= ">" ;
-
-GE.        RelOp ::= ">=" ;
-
-EQU.       RelOp ::= "==" ;
-
-NE.        RelOp ::= "!=" ;
+Plus.      AddOp ::= PPlus;
+Minus.     AddOp ::= PMinus;
+Times.     MulOp ::= PTimes;
+Div.       MulOp ::= PDiv;
+Mod.       MulOp ::= PMod;
+LTH.       RelOp ::= PLTH;
+LE.        RelOp ::= PLE;
+GTH.       RelOp ::= PGTH;
+GE.        RelOp ::= PGE;
+EQU.       RelOp ::= PEQU;
+NE.        RelOp ::= PNE;
 
 -- comments ------------------------------------------------
 

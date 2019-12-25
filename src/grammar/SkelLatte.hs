@@ -9,76 +9,154 @@ type Result = Err String
 failure :: Show a => a -> Result
 failure x = Bad $ "Undefined case: " ++ show x
 
-transIdent :: Ident -> Result
-transIdent x = case x of
-  Ident string -> failure x
-transProgram :: Show a => Program a -> Result
+transPIdent :: PIdent -> Result
+transPIdent x = case x of
+  PIdent string -> failure x
+transPInteger :: PInteger -> Result
+transPInteger x = case x of
+  PInteger string -> failure x
+transPTrue :: PTrue -> Result
+transPTrue x = case x of
+  PTrue string -> failure x
+transPFalse :: PFalse -> Result
+transPFalse x = case x of
+  PFalse string -> failure x
+transPString :: PString -> Result
+transPString x = case x of
+  PString string -> failure x
+transPNeg :: PNeg -> Result
+transPNeg x = case x of
+  PNeg string -> failure x
+transPNot :: PNot -> Result
+transPNot x = case x of
+  PNot string -> failure x
+transPAnd :: PAnd -> Result
+transPAnd x = case x of
+  PAnd string -> failure x
+transPOr :: POr -> Result
+transPOr x = case x of
+  POr string -> failure x
+transPPlus :: PPlus -> Result
+transPPlus x = case x of
+  PPlus string -> failure x
+transPMinus :: PMinus -> Result
+transPMinus x = case x of
+  PMinus string -> failure x
+transPTimes :: PTimes -> Result
+transPTimes x = case x of
+  PTimes string -> failure x
+transPDiv :: PDiv -> Result
+transPDiv x = case x of
+  PDiv string -> failure x
+transPMod :: PMod -> Result
+transPMod x = case x of
+  PMod string -> failure x
+transPLTH :: PLTH -> Result
+transPLTH x = case x of
+  PLTH string -> failure x
+transPLE :: PLE -> Result
+transPLE x = case x of
+  PLE string -> failure x
+transPGTH :: PGTH -> Result
+transPGTH x = case x of
+  PGTH string -> failure x
+transPGE :: PGE -> Result
+transPGE x = case x of
+  PGE string -> failure x
+transPEQU :: PEQU -> Result
+transPEQU x = case x of
+  PEQU string -> failure x
+transPNE :: PNE -> Result
+transPNE x = case x of
+  PNE string -> failure x
+transPOpenBlock :: POpenBlock -> Result
+transPOpenBlock x = case x of
+  POpenBlock string -> failure x
+transPCloseBlock :: PCloseBlock -> Result
+transPCloseBlock x = case x of
+  PCloseBlock string -> failure x
+transPSemicolon :: PSemicolon -> Result
+transPSemicolon x = case x of
+  PSemicolon string -> failure x
+transPIf :: PIf -> Result
+transPIf x = case x of
+  PIf string -> failure x
+transPElse :: PElse -> Result
+transPElse x = case x of
+  PElse string -> failure x
+transPWhile :: PWhile -> Result
+transPWhile x = case x of
+  PWhile string -> failure x
+transPReturn :: PReturn -> Result
+transPReturn x = case x of
+  PReturn string -> failure x
+transProgram :: Program -> Result
 transProgram x = case x of
-  Program _ topdefs -> failure x
-transTopDef :: Show a => TopDef a -> Result
+  Program topdefs -> failure x
+transTopDef :: TopDef -> Result
 transTopDef x = case x of
-  FnDef _ type_ ident args block -> failure x
-transArg :: Show a => Arg a -> Result
+  FnDef type_ pident args block -> failure x
+transArg :: Arg -> Result
 transArg x = case x of
-  Arg _ type_ ident -> failure x
-transBlock :: Show a => Block a -> Result
+  Arg type_ pident -> failure x
+transBlock :: Block -> Result
 transBlock x = case x of
-  Block _ stmts -> failure x
-transStmt :: Show a => Stmt a -> Result
+  Block popenblock stmts pcloseblock -> failure x
+transStmt :: Stmt -> Result
 transStmt x = case x of
-  Empty _ -> failure x
-  BStmt _ block -> failure x
-  Decl _ type_ items -> failure x
-  Ass _ ident expr -> failure x
-  Incr _ ident -> failure x
-  Decr _ ident -> failure x
-  Ret _ expr -> failure x
-  VRet _ -> failure x
-  Cond _ expr stmt -> failure x
-  CondElse _ expr stmt1 stmt2 -> failure x
-  While _ expr stmt -> failure x
-  SExp _ expr -> failure x
-transItem :: Show a => Item a -> Result
+  Empty psemicolon -> failure x
+  BStmt block -> failure x
+  Decl type_ items psemicolon -> failure x
+  Ass pident expr psemicolon -> failure x
+  Incr pident psemicolon -> failure x
+  Decr pident psemicolon -> failure x
+  Ret preturn expr psemicolon -> failure x
+  VRet preturn psemicolon -> failure x
+  Cond pif expr stmt -> failure x
+  CondElse pif expr stmt1 pelse stmt2 -> failure x
+  While pwhile expr stmt -> failure x
+  SExp expr psemicolon -> failure x
+transItem :: Item -> Result
 transItem x = case x of
-  NoInit _ ident -> failure x
-  Init _ ident expr -> failure x
-transType :: Show a => Type a -> Result
+  NoInit pident -> failure x
+  Init pident expr -> failure x
+transType :: Type -> Result
 transType x = case x of
-  Int _ -> failure x
-  Str _ -> failure x
-  Bool _ -> failure x
-  Void _ -> failure x
-  Fun _ type_ types -> failure x
-transExpr :: Show a => Expr a -> Result
+  Int -> failure x
+  Str -> failure x
+  Bool -> failure x
+  Void -> failure x
+  Fun type_ types -> failure x
+transExpr :: Expr -> Result
 transExpr x = case x of
-  EVar _ ident -> failure x
-  ELitInt _ integer -> failure x
-  ELitTrue _ -> failure x
-  ELitFalse _ -> failure x
-  EApp _ ident exprs -> failure x
-  EString _ string -> failure x
-  Neg _ expr -> failure x
-  Not _ expr -> failure x
-  EMul _ expr1 mulop expr2 -> failure x
-  EAdd _ expr1 addop expr2 -> failure x
-  ERel _ expr1 relop expr2 -> failure x
-  EAnd _ expr1 expr2 -> failure x
-  EOr _ expr1 expr2 -> failure x
-transAddOp :: Show a => AddOp a -> Result
+  EVar pident -> failure x
+  ELitInt pinteger -> failure x
+  ELitTrue ptrue -> failure x
+  ELitFalse pfalse -> failure x
+  EApp pident exprs -> failure x
+  EString pstring -> failure x
+  Neg pneg expr -> failure x
+  Not pnot expr -> failure x
+  EMul expr1 mulop expr2 -> failure x
+  EAdd expr1 addop expr2 -> failure x
+  ERel expr1 relop expr2 -> failure x
+  EAnd expr1 pand expr2 -> failure x
+  EOr expr1 por expr2 -> failure x
+transAddOp :: AddOp -> Result
 transAddOp x = case x of
-  Plus _ -> failure x
-  Minus _ -> failure x
-transMulOp :: Show a => MulOp a -> Result
+  Plus pplus -> failure x
+  Minus pminus -> failure x
+transMulOp :: MulOp -> Result
 transMulOp x = case x of
-  Times _ -> failure x
-  Div _ -> failure x
-  Mod _ -> failure x
-transRelOp :: Show a => RelOp a -> Result
+  Times ptimes -> failure x
+  Div pdiv -> failure x
+  Mod pmod -> failure x
+transRelOp :: RelOp -> Result
 transRelOp x = case x of
-  LTH _ -> failure x
-  LE _ -> failure x
-  GTH _ -> failure x
-  GE _ -> failure x
-  EQU _ -> failure x
-  NE _ -> failure x
+  LTH plth -> failure x
+  LE ple -> failure x
+  GTH pgth -> failure x
+  GE pge -> failure x
+  EQU pequ -> failure x
+  NE pne -> failure x
 

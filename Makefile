@@ -1,5 +1,5 @@
 all:
-	ghc --make -isrc/:src/grammar src/LatcLlvm.hs -o latc_llvm
+	/opt/ghc/bin/ghc-8.6.4 --make -isrc/:src/grammar src/LatcLlvm.hs -o latc_llvm
 
 clean:
 	-find . -type f -name '*.o' -delete
