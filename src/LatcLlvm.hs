@@ -16,6 +16,7 @@ import LexLatte
 import ParLatte
 import PrintLatte
 import SkelLatte
+import qualified Frontend.Check as Check
 
 
 main :: IO ()
@@ -36,6 +37,7 @@ compileFile f = do
   source <- readFile f
   code <- compile source baseName
   putStrLn $ code
+  exitSuccess
 
 
 compile :: String -> String -> IO String
@@ -43,10 +45,15 @@ compile programText baseName =
   case pProgram (myLexer programText) of
     Bad s -> do
       putStrLn "\nParsing failed\n"
+      putStrLn s
       putStrLn programText
       exitFailure
     Ok tree -> do
-      return $ show $ tree
+      case Check.check tree of
+        Nothing -> return $ "OK"
+        Just error -> do
+          putStrLn $ show error
+          exitFailure
 
 
 usage :: IO ()
