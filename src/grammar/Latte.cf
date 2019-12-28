@@ -66,15 +66,15 @@ separator  Type "," ;
 
 EVar.      Expr6 ::= PIdent ;
 
-ELitInt.   Expr6 ::= PInteger ;
+ELitInt.   Expr6 ::= Integer ;
 
-ELitTrue.  Expr6 ::= PTrue ;
+ELitTrue.  Expr6 ::= "true" ;
 
-ELitFalse. Expr6 ::= PFalse ;
+ELitFalse. Expr6 ::= "false" ;
 
 EApp.      Expr6 ::= PIdent "(" [Expr] ")" ;
 
-EString.   Expr6 ::= PString ;
+EString.   Expr6 ::= String ;
 
 Neg.       Expr5 ::= PMinus Expr6 ;
 
@@ -152,7 +152,5 @@ position token PMod {"%"} ;
 position token PLTH {"<"} ;
 position token PGTH {">"} ;
 
-position token PString '"' ((char - ["\"\\"]) | ('\\' ["\"\\nt"]))* '"' ;
-position token PInteger (digit+);
 position token PIdent (letter (letter | digit | '_' | '\'' )*);
 

@@ -193,9 +193,9 @@ typeof (EVar pIdent) = boundType pIdent
 
 typeof (ELitInt _) = return Int
 
-typeof (ELitTrue _) = return Bool
+typeof ELitTrue = return Bool
 
-typeof (ELitFalse _) = return Bool
+typeof ELitFalse = return Bool
 
 typeof (EString _) = return Str
 

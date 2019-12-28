@@ -46,10 +46,6 @@ newtype PLTH = PLTH ((Int,Int),String)
   deriving (Eq, Ord, Show, Read)
 newtype PGTH = PGTH ((Int,Int),String)
   deriving (Eq, Ord, Show, Read)
-newtype PString = PString ((Int,Int),String)
-  deriving (Eq, Ord, Show, Read)
-newtype PInteger = PInteger ((Int,Int),String)
-  deriving (Eq, Ord, Show, Read)
 newtype PIdent = PIdent ((Int,Int),String)
   deriving (Eq, Ord, Show, Read)
 data Program = Program [TopDef]
@@ -87,11 +83,11 @@ data Type = Int | Str | Bool | Void | Fun Type [Type]
 
 data Expr
     = EVar PIdent
-    | ELitInt PInteger
-    | ELitTrue PTrue
-    | ELitFalse PFalse
+    | ELitInt Integer
+    | ELitTrue
+    | ELitFalse
     | EApp PIdent [Expr]
-    | EString PString
+    | EString String
     | Neg PMinus Expr
     | Not PNot Expr
     | EMul Expr MulOp Expr

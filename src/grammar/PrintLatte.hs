@@ -167,14 +167,6 @@ instance Print PGTH where
   prt _ (PGTH (_,i)) = doc (showString ( i))
 
 
-instance Print PString where
-  prt _ (PString (_,i)) = doc (showString ( i))
-
-
-instance Print PInteger where
-  prt _ (PInteger (_,i)) = doc (showString ( i))
-
-
 instance Print PIdent where
   prt _ (PIdent (_,i)) = doc (showString ( i))
 
@@ -234,11 +226,11 @@ instance Print Type where
 instance Print Expr where
   prt i e = case e of
     EVar pident -> prPrec i 6 (concatD [prt 0 pident])
-    ELitInt pinteger -> prPrec i 6 (concatD [prt 0 pinteger])
-    ELitTrue ptrue -> prPrec i 6 (concatD [prt 0 ptrue])
-    ELitFalse pfalse -> prPrec i 6 (concatD [prt 0 pfalse])
+    ELitInt n -> prPrec i 6 (concatD [prt 0 n])
+    ELitTrue -> prPrec i 6 (concatD [doc (showString "true")])
+    ELitFalse -> prPrec i 6 (concatD [doc (showString "false")])
     EApp pident exprs -> prPrec i 6 (concatD [prt 0 pident, doc (showString "("), prt 0 exprs, doc (showString ")")])
-    EString pstring -> prPrec i 6 (concatD [prt 0 pstring])
+    EString str -> prPrec i 6 (concatD [prt 0 str])
     Neg pminus expr -> prPrec i 5 (concatD [prt 0 pminus, prt 6 expr])
     Not pnot expr -> prPrec i 5 (concatD [prt 0 pnot, prt 6 expr])
     EMul expr1 mulop expr2 -> prPrec i 4 (concatD [prt 4 expr1, prt 0 mulop, prt 5 expr2])

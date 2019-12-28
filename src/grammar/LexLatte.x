@@ -52,14 +52,12 @@ f a l s e { tok (\p s -> PT p (eitherResIdent (T_PFalse . share) s)) }
 \% { tok (\p s -> PT p (eitherResIdent (T_PMod . share) s)) }
 \< { tok (\p s -> PT p (eitherResIdent (T_PLTH . share) s)) }
 \> { tok (\p s -> PT p (eitherResIdent (T_PGTH . share) s)) }
-\" ($u # [\" \\]| \\ [\" \\ n t]) * \" { tok (\p s -> PT p (eitherResIdent (T_PString . share) s)) }
-$d + { tok (\p s -> PT p (eitherResIdent (T_PInteger . share) s)) }
 $l ($l | $d | \_ | \')* { tok (\p s -> PT p (eitherResIdent (T_PIdent . share) s)) }
 
 $l $i*   { tok (\p s -> PT p (eitherResIdent (TV . share) s)) }
+\" ([$u # [\" \\ \n]] | (\\ (\" | \\ | \' | n | t)))* \"{ tok (\p s -> PT p (TL $ share $ unescapeInitTail s)) }
 
-
-
+$d+      { tok (\p s -> PT p (TI $ share s))    }
 
 
 {
@@ -99,8 +97,6 @@ data Tok =
  | T_PMod !String
  | T_PLTH !String
  | T_PGTH !String
- | T_PString !String
- | T_PInteger !String
  | T_PIdent !String
 
  deriving (Eq,Show,Ord)
@@ -158,8 +154,6 @@ prToken t = case t of
   PT _ (T_PMod s) -> s
   PT _ (T_PLTH s) -> s
   PT _ (T_PGTH s) -> s
-  PT _ (T_PString s) -> s
-  PT _ (T_PInteger s) -> s
   PT _ (T_PIdent s) -> s
 
 
@@ -174,7 +168,7 @@ eitherResIdent tv s = treeFind resWords
                               | s == a = t
 
 resWords :: BTree
-resWords = b ";" 6 (b "++" 3 (b ")" 2 (b "(" 1 N N) N) (b "--" 5 (b "," 4 N N) N)) (b "int" 9 (b "boolean" 8 (b "=" 7 N N) N) (b "void" 11 (b "string" 10 N N) N))
+resWords = b "=" 7 (b "," 4 (b ")" 2 (b "(" 1 N N) (b "++" 3 N N)) (b ";" 6 (b "--" 5 N N) N)) (b "string" 11 (b "false" 9 (b "boolean" 8 N N) (b "int" 10 N N)) (b "void" 13 (b "true" 12 N N) N))
    where b s n = let bs = id s
                   in B bs (TS bs n)
 

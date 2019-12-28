@@ -16,6 +16,7 @@ data SemanticError =
   NotCallable Ident Position |
   ReturnOutsideProcedure Position | -- actually grammar doesn't allow that
   ReturnTypeMismatch Type Type Position |
+  DivisionByZero Position |
   ProcExitWithoutReturn Ident Position |
   MainNotFound |
   MainSignatureMismatch Type |
@@ -57,6 +58,10 @@ instance Show SemanticError where
     spaceSep ["Procedure main declared with type", showType actType, "- expected int()"]
   show (InternalError str pos) =
     spaceSep ["Internal compiler error: ", str, "at", show pos]
+  show (DivisionByZero pos) =
+    spaceSep ["Division by zero at: ", show pos]
+  show (ProcExitWithoutReturn pIdent pos) =
+    spaceSep ["Non-void procedure", show pIdent, "exits witout return at", show pos]
 
 
 

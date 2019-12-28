@@ -21,10 +21,14 @@ import ErrM
   ';' { PT _ (TS _ 6) }
   '=' { PT _ (TS _ 7) }
   'boolean' { PT _ (TS _ 8) }
-  'int' { PT _ (TS _ 9) }
-  'string' { PT _ (TS _ 10) }
-  'void' { PT _ (TS _ 11) }
+  'false' { PT _ (TS _ 9) }
+  'int' { PT _ (TS _ 10) }
+  'string' { PT _ (TS _ 11) }
+  'true' { PT _ (TS _ 12) }
+  'void' { PT _ (TS _ 13) }
 
+L_integ  { PT _ (TI $$) }
+L_quoted { PT _ (TL $$) }
 L_POpenBlock { PT _ (T_POpenBlock _) }
 L_PCloseBlock { PT _ (T_PCloseBlock _) }
 L_PIf { PT _ (T_PIf _) }
@@ -47,13 +51,13 @@ L_PDiv { PT _ (T_PDiv _) }
 L_PMod { PT _ (T_PMod _) }
 L_PLTH { PT _ (T_PLTH _) }
 L_PGTH { PT _ (T_PGTH _) }
-L_PString { PT _ (T_PString _) }
-L_PInteger { PT _ (T_PInteger _) }
 L_PIdent { PT _ (T_PIdent _) }
 
 
 %%
 
+Integer :: { Integer } : L_integ  { (read ( $1)) :: Integer }
+String  :: { String }  : L_quoted {  $1 }
 POpenBlock    :: { POpenBlock} : L_POpenBlock { POpenBlock (mkPosToken $1)}
 PCloseBlock    :: { PCloseBlock} : L_PCloseBlock { PCloseBlock (mkPosToken $1)}
 PIf    :: { PIf} : L_PIf { PIf (mkPosToken $1)}
@@ -76,8 +80,6 @@ PDiv    :: { PDiv} : L_PDiv { PDiv (mkPosToken $1)}
 PMod    :: { PMod} : L_PMod { PMod (mkPosToken $1)}
 PLTH    :: { PLTH} : L_PLTH { PLTH (mkPosToken $1)}
 PGTH    :: { PGTH} : L_PGTH { PGTH (mkPosToken $1)}
-PString    :: { PString} : L_PString { PString (mkPosToken $1)}
-PInteger    :: { PInteger} : L_PInteger { PInteger (mkPosToken $1)}
 PIdent    :: { PIdent} : L_PIdent { PIdent (mkPosToken $1)}
 
 Program :: { Program }
@@ -125,11 +127,11 @@ ListType : {- empty -} { [] }
          | Type ',' ListType { (:) $1 $3 }
 Expr6 :: { Expr }
 Expr6 : PIdent { AbsLatte.EVar $1 }
-      | PInteger { AbsLatte.ELitInt $1 }
-      | PTrue { AbsLatte.ELitTrue $1 }
-      | PFalse { AbsLatte.ELitFalse $1 }
+      | Integer { AbsLatte.ELitInt $1 }
+      | 'true' { AbsLatte.ELitTrue }
+      | 'false' { AbsLatte.ELitFalse }
       | PIdent '(' ListExpr ')' { AbsLatte.EApp $1 $3 }
-      | PString { AbsLatte.EString $1 }
+      | String { AbsLatte.EString $1 }
       | '(' Expr ')' { $2 }
 Expr5 :: { Expr }
 Expr5 : PMinus Expr6 { AbsLatte.Neg $1 $2 }

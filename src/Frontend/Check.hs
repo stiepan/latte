@@ -11,7 +11,7 @@ import Frontend.Common
 check :: AbsLatte.Program -> Either SemanticError AbsLatte.Program
 check program = do
   TypeCheck.check program
-  let optimizedProg = EvalOpt.optimizeByEval $ program
+  optimizedProg <- EvalOpt.optimizeByEval $ program
   RequiredRetCheck.check optimizedProg
   return optimizedProg
 

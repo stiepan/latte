@@ -75,12 +75,6 @@ transPLTH x = case x of
 transPGTH :: PGTH -> Result
 transPGTH x = case x of
   PGTH string -> failure x
-transPString :: PString -> Result
-transPString x = case x of
-  PString string -> failure x
-transPInteger :: PInteger -> Result
-transPInteger x = case x of
-  PInteger string -> failure x
 transPIdent :: PIdent -> Result
 transPIdent x = case x of
   PIdent string -> failure x
@@ -124,11 +118,11 @@ transType x = case x of
 transExpr :: Expr -> Result
 transExpr x = case x of
   EVar pident -> failure x
-  ELitInt pinteger -> failure x
-  ELitTrue ptrue -> failure x
-  ELitFalse pfalse -> failure x
+  ELitInt integer -> failure x
+  ELitTrue -> failure x
+  ELitFalse -> failure x
   EApp pident exprs -> failure x
-  EString pstring -> failure x
+  EString string -> failure x
   Neg pminus expr -> failure x
   Not pnot expr -> failure x
   EMul expr1 mulop expr2 -> failure x
