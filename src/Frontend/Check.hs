@@ -20,6 +20,7 @@ data SemanticError =
   NamesCollision Ident Position Position |
   ArgumentTypeMismatch Ident Position Int Type Type |
   UnexpectedType Type Type Position |
+  InvalidTypeInThisContext Type Position |
   UnexpectedTypeLeftOperand Type Type Position |
   UnexpectedTypeRightOperand Type Type Position |
   UndefinedIdent Ident Position |
@@ -114,7 +115,7 @@ checkS (Ret (PReturn (pos, _)) exp) = do
   rType <- typeof exp
   assertActiveProc (p2Pos pos) rType
 
-checkS (VRet (PReturn (pos, _)) ) = assertActiveProc (p2Pos pos) Void
+checkS (VRet (PReturn (pos, _))) = assertActiveProc (p2Pos pos) Void
 
 checkS (Cond (PIf (pos, _)) exp stmt) = do
   assertTypeUnary Bool (p2Pos pos) exp
@@ -191,15 +192,22 @@ declareProcedure (FnDef rType pIdent args _) = do
 
 declare :: Type -> PIdent -> Verification ()
 declare vType pIdent = do
+  assertTypeAllowed vType position
   context <- lift get
   let locals = blockVars context
-  let (ident, position) = pIdent2Ident pIdent
   case ident `Map.lookup` locals of
       Just prevPos -> throwE $ NamesCollision ident position prevPos
       Nothing -> do
         let newLocals = Map.insert ident position locals
         let newBindings = Map.insert ident vType (bindings context)
         lift $ put $ Context newBindings newLocals $ activeProc context
+  where
+    (ident, position) = pIdent2Ident pIdent
+
+
+assertTypeAllowed :: Type -> Position -> Verification ()
+assertTypeAllowed Void pos = throwE $ InvalidTypeInThisContext Void pos
+assertTypeAllowed _ _ = return ()
 
 
 boundType :: PIdent -> Verification Type
@@ -241,11 +249,19 @@ typeof (EMul lExp mulOp rExp) = do
   (assertTypeUnary Int pos lExp) `catchE` (repackageUT UnexpectedTypeLeftOperand)
   (assertTypeUnary Int pos rExp) `catchE` (repackageUT UnexpectedTypeRightOperand)
 
--- todo string concatenation overloades + operator
-typeof (EAdd lExp addOp rExp) = do
-  let pos = addOpPosition addOp
-  (assertTypeUnary Int pos lExp) `catchE` (repackageUT UnexpectedTypeLeftOperand)
-  (assertTypeUnary Int pos rExp) `catchE` (repackageUT UnexpectedTypeRightOperand)
+typeof (EAdd lExp addOp rExp) =
+  case addOp of
+    Plus _ -> do
+      lType <- typeof lExp
+      case lType of
+        Int -> (assertTypeUnary Int pos rExp)
+        Str -> (assertTypeUnary Str pos rExp)
+        _ -> throwE $ InvalidTypeInThisContext lType pos
+    _ -> do
+      (assertTypeUnary Int pos lExp) `catchE` (repackageUT UnexpectedTypeLeftOperand)
+      (assertTypeUnary Int pos rExp) `catchE` (repackageUT UnexpectedTypeRightOperand)
+  where
+    pos = addOpPosition addOp
 
 typeof (ERel lExp relOp rExp) = do
   case relOp of
@@ -290,7 +306,7 @@ assertTypeUnary aType pos exp = do
   if eType /= aType then
     throwE $ UnexpectedType aType eType pos
   else
-    return Int
+    return aType
 
 
 assertSameType :: Position -> Expr -> Expr -> Verification Type
