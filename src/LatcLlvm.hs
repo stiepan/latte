@@ -50,8 +50,8 @@ compile programText baseName =
       exitFailure
     Ok tree -> do
       case Check.check tree of
-        Nothing -> return $ "OK"
-        Just error -> do
+        Right optimizedTree -> return $ printTree optimizedTree
+        Left error -> do
           putStrLn $ show error
           exitFailure
 
