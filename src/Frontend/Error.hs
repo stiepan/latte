@@ -41,9 +41,9 @@ instance Show SemanticError where
         spaceSep ["Type mismatch in left operand at", show pos, "-", "expected",
           showType expType, "got", showType actType, "instead."]
   show (UndefinedIdent ident pos) =
-    spaceSep ["Usage of undfined variable", show ident, "at", show pos]
+    spaceSep ["Usage of undefined variable", show ident, "at", show pos]
   show (UndefinedProcIdent ident pos) =
-    spaceSep ["Usage of undfined procedure", show ident, "at", show pos]
+    spaceSep ["Usage of undefined procedure", show ident, "at", show pos]
   show (InvalidNumberOfArguments ident pos) =
     spaceSep ["Invalid number of arguments in the call of", show ident, "at", show pos]
   show (NotCallable ident pos) =
@@ -61,7 +61,7 @@ instance Show SemanticError where
   show (DivisionByZero pos) =
     spaceSep ["Division by zero at: ", show pos]
   show (ProcExitWithoutReturn pIdent pos) =
-    spaceSep ["Non-void procedure", show pIdent, "exits witout return at", show pos]
+    spaceSep ["Non-void procedure", show pIdent, "exits not returning anything at", show pos]
 
 
 
