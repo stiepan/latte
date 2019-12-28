@@ -14,4 +14,3 @@ check program = do
   optimizedProg <- EvalOpt.optimizeByEval $ program
   RequiredRetCheck.check optimizedProg
   return optimizedProg
-

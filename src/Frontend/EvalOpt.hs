@@ -148,21 +148,57 @@ simplifyE (ERel expL relOp expR) = do
   sExpL <- simplifyE expL
   sExpR <- simplifyE expR
   let innerSimplified = ERel sExpL relOp sExpR
-  return $ case (sExpL, sExpR) of
-    (ELitInt n, ELitInt m) -> if n == m then ELitTrue else ELitFalse
-    (EString ls, EString rs) -> if ls == rs then ELitTrue else ELitFalse
-    (ELitTrue, ELitTrue) -> ELitTrue
-    (ELitFalse, ELitFalse) -> ELitTrue
-    (ELitFalse, ELitTrue) -> ELitFalse
-    (ELitTrue, ELitFalse) -> ELitFalse
-    (EVar (PIdent (_, lName)), EVar (PIdent (_, rName))) ->
-      if lName == rName then
-        ELitTrue
-      else
-        innerSimplified
-    (_, _) -> innerSimplified
+  return $ case sExpL of
+    ELitInt _ -> iPerformRelOp innerSimplified relOp sExpL sExpR
+    EString _ -> sPerformRelOp innerSimplified relOp sExpL sExpR
+    ELitTrue -> bPerformRelOp innerSimplified relOp sExpL sExpR
+    ELitFalse -> bPerformRelOp innerSimplified relOp sExpL sExpR
+    EVar _ -> vPerformRelOp innerSimplified relOp sExpL sExpR
+    _ -> innerSimplified
 
 simplifyE exp = return exp
+
+iPerformRelOp :: Expr -> RelOp -> Expr -> Expr -> Expr
+iPerformRelOp fallback relOp (ELitInt n) (ELitInt m) = performRelOp fallback relOp n m
+
+iPerformRelOp fallback _ _ _ = fallback
+
+
+sPerformRelOp :: Expr -> RelOp -> Expr -> Expr -> Expr
+sPerformRelOp fallback relOp (EString l) (EString r) = performRelOp fallback relOp l r
+
+sPerformRelOp fallback _ _ _ = fallback
+
+
+bPerformRelOp :: Expr -> RelOp -> Expr -> Expr -> Expr
+bPerformRelOp fallback relOp l r
+  | all (`elem` booleanLiterals) [l, r] = performRelOp fallback relOp l r
+  | otherwise = fallback
+  where
+    booleanLiterals = [ELitTrue, ELitFalse]
+
+
+vPerformRelOp :: Expr -> RelOp -> Expr -> Expr -> Expr
+vPerformRelOp fallback relOp (EVar (PIdent (_, lName))) (EVar (PIdent (_, rName))) =
+  case relOp of
+    (EQU _) -> if lName == rName then ELitTrue else fallback
+    (NE _) -> if lName /= rName then ELitTrue else fallback
+    _ -> fallback
+
+vPerformRelOp fallback _ _ _ = fallback
+
+
+performRelOp :: Eq a => Expr -> RelOp -> a -> a -> Expr
+performRelOp _ (EQU _) l r = asSyntaxBool $ l == r
+
+performRelOp _ (NE _) l r = asSyntaxBool $ l /= r
+
+performRelOp fallback _ _ _ = fallback
+
+
+asSyntaxBool :: Bool -> Expr
+asSyntaxBool True = ELitTrue
+asSyntaxBool False = ELitFalse
 
 
 iPerformMulOp :: MulOp -> Integer -> Integer -> Simplification Expr
