@@ -159,7 +159,7 @@ simplifyE (ERel expL relOp expR) = do
 simplifyE exp = return exp
 
 iPerformRelOp :: Expr -> RelOp -> Expr -> Expr -> Expr
-iPerformRelOp fallback relOp (ELitInt n) (ELitInt m) = performRelOp fallback relOp n m
+iPerformRelOp fallback relOp (ELitInt n) (ELitInt m) = performAllRelOp fallback relOp n m
 
 iPerformRelOp fallback _ _ _ = fallback
 
@@ -186,6 +186,18 @@ vPerformRelOp fallback relOp (EVar (PIdent (_, lName))) (EVar (PIdent (_, rName)
     _ -> fallback
 
 vPerformRelOp fallback _ _ _ = fallback
+
+
+performAllRelOp :: Expr -> RelOp -> Integer -> Integer -> Expr
+performAllRelOp _ (LTH _) l r = asSyntaxBool $ l < r
+
+performAllRelOp _ (LE _) l r = asSyntaxBool $ l <= r
+
+performAllRelOp _ (GTH _) l r = asSyntaxBool $ l > r
+
+performAllRelOp _ (GE _) l r = asSyntaxBool $ l >= r
+
+performAllRelOp fallback relOp l r = performRelOp fallback relOp l r
 
 
 performRelOp :: Eq a => Expr -> RelOp -> a -> a -> Expr
