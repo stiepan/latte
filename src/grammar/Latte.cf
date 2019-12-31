@@ -98,6 +98,8 @@ separator  Expr "," ;
 
 Plus.      AddOp ::= PPlus ;
 
+internal   OverloadedPlus. AddOp ::= Type PPlus ;
+
 Minus.     AddOp ::= PMinus ;
 
 Times.     MulOp ::= PTimes ;
@@ -116,7 +118,11 @@ GE.        RelOp ::= PGE ;
 
 EQU.       RelOp ::= PEQU ;
 
+internal   OverloadedEQU. RelOp ::= Type PEQU ;
+
 NE.        RelOp ::= PNE ;
+
+internal   OverloadedNE. RelOp ::= Type PNE ;
 
 -- comments ------------------------------------------------
 

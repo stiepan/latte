@@ -97,13 +97,20 @@ data Expr
     | EOr Expr POr Expr
   deriving (Eq, Ord, Show, Read)
 
-data AddOp = Plus PPlus | Minus PMinus
+data AddOp = Plus PPlus | OverloadedPlus Type PPlus | Minus PMinus
   deriving (Eq, Ord, Show, Read)
 
 data MulOp = Times PTimes | Div PDiv | Mod PMod
   deriving (Eq, Ord, Show, Read)
 
 data RelOp
-    = LTH PLTH | LE PLE | GTH PGTH | GE PGE | EQU PEQU | NE PNE
+    = LTH PLTH
+    | LE PLE
+    | GTH PGTH
+    | GE PGE
+    | EQU PEQU
+    | OverloadedEQU Type PEQU
+    | NE PNE
+    | OverloadedNE Type PNE
   deriving (Eq, Ord, Show, Read)
 

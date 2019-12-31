@@ -244,6 +244,7 @@ instance Print Expr where
 instance Print AddOp where
   prt i e = case e of
     Plus pplus -> prPrec i 0 (concatD [prt 0 pplus])
+    OverloadedPlus type_ pplus -> prPrec i 0 (concatD [prt 0 type_, prt 0 pplus])
     Minus pminus -> prPrec i 0 (concatD [prt 0 pminus])
 
 instance Print MulOp where
@@ -259,6 +260,8 @@ instance Print RelOp where
     GTH pgth -> prPrec i 0 (concatD [prt 0 pgth])
     GE pge -> prPrec i 0 (concatD [prt 0 pge])
     EQU pequ -> prPrec i 0 (concatD [prt 0 pequ])
+    OverloadedEQU type_ pequ -> prPrec i 0 (concatD [prt 0 type_, prt 0 pequ])
     NE pne -> prPrec i 0 (concatD [prt 0 pne])
+    OverloadedNE type_ pne -> prPrec i 0 (concatD [prt 0 type_, prt 0 pne])
 
 

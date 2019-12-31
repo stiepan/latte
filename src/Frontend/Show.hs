@@ -1,13 +1,8 @@
-module Frontend.Common where
+module Frontend.Show where
+
+import Common.Ident
 
 import qualified AbsLatte
-
-data Position = Position {
-  line :: Int,
-  column :: Int
-}
-
-newtype Ident = Ident String deriving (Eq, Ord)
 
 joinWith :: String -> [String] -> String
 joinWith sep [] = ""
@@ -28,9 +23,3 @@ showType AbsLatte.Str = "string"
 showType AbsLatte.Bool = "boolean"
 showType AbsLatte.Void = "void"
 showType (AbsLatte.Fun t ats) = (showType t) ++  "(" ++ (joinWith ", " (map showType ats)) ++ ")"
-
-pIdent2Ident :: AbsLatte.PIdent -> (Ident, Position)
-pIdent2Ident (AbsLatte.PIdent ((line, column), name)) = (Ident name, Position line column)
-
-p2Pos :: (Int, Int) -> Position
-p2Pos = uncurry Position

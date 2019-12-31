@@ -1,6 +1,7 @@
 module Frontend.Error where
 
-import Frontend.Common
+import Common.Ident
+import Frontend.Show
 import AbsLatte
 
 data SemanticError =
@@ -21,6 +22,7 @@ data SemanticError =
   MainNotFound |
   MainSignatureMismatch Type |
   InternalError String Position
+
 
 instance Show SemanticError where
   show (NamesCollision ident currentPos prevPos) =
@@ -62,6 +64,3 @@ instance Show SemanticError where
     spaceSep ["Division by zero at: ", show pos]
   show (ProcExitWithoutReturn pIdent pos) =
     spaceSep ["Non-void procedure", show pIdent, "exits not returning anything at", show pos]
-
-
-

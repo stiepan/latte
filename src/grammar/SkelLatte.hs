@@ -133,6 +133,7 @@ transExpr x = case x of
 transAddOp :: AddOp -> Result
 transAddOp x = case x of
   Plus pplus -> failure x
+  OverloadedPlus type_ pplus -> failure x
   Minus pminus -> failure x
 transMulOp :: MulOp -> Result
 transMulOp x = case x of
@@ -146,5 +147,7 @@ transRelOp x = case x of
   GTH pgth -> failure x
   GE pge -> failure x
   EQU pequ -> failure x
+  OverloadedEQU type_ pequ -> failure x
   NE pne -> failure x
+  OverloadedNE type_ pne -> failure x
 

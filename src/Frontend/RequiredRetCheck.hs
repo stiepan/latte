@@ -1,7 +1,8 @@
 module Frontend.RequiredRetCheck where
 
 import Frontend.Error
-import Frontend.Common
+import Common.Ident
+import Frontend.Show
 import AbsLatte
 
 

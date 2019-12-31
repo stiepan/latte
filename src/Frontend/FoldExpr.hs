@@ -1,10 +1,11 @@
-module Frontend.EvalOpt where
+module Frontend.FoldExpr where
 
 import Control.Monad.Trans.Except
 import Data.Functor.Identity
 
 import Frontend.Error
-import Frontend.Common
+import Common.Ident
+import Frontend.Show
 import AbsLatte
 
 
@@ -181,8 +182,8 @@ bPerformRelOp fallback relOp l r
 vPerformRelOp :: Expr -> RelOp -> Expr -> Expr -> Expr
 vPerformRelOp fallback relOp (EVar (PIdent (_, lName))) (EVar (PIdent (_, rName))) =
   case relOp of
-    (EQU _) -> if lName == rName then ELitTrue else fallback
-    (NE _) -> if lName /= rName then ELitTrue else fallback
+    (OverloadedEQU _ _) -> if lName == rName then ELitTrue else fallback
+    (OverloadedNE _ _) -> if lName /= rName then ELitTrue else fallback
     _ -> fallback
 
 vPerformRelOp fallback _ _ _ = fallback
@@ -201,9 +202,9 @@ performAllRelOp fallback relOp l r = performRelOp fallback relOp l r
 
 
 performRelOp :: Eq a => Expr -> RelOp -> a -> a -> Expr
-performRelOp _ (EQU _) l r = asSyntaxBool $ l == r
+performRelOp _ (OverloadedEQU _ _) l r = asSyntaxBool $ l == r
 
-performRelOp _ (NE _) l r = asSyntaxBool $ l /= r
+performRelOp _ (OverloadedNE _ _) l r = asSyntaxBool $ l /= r
 
 performRelOp fallback _ _ _ = fallback
 
@@ -230,6 +231,6 @@ iPerformMulOp (Mod (PMod (pos, _))) n m =
 
 
 iPerformAddOp :: AddOp -> Integer -> Integer -> Simplification Expr
-iPerformAddOp (Plus (PPlus (pos, _))) n m = return $ ELitInt $ n + m
+iPerformAddOp (OverloadedPlus _ (PPlus (pos, _))) n m = return $ ELitInt $ n + m
 
 iPerformAddOp (Minus (PMinus (pos, _))) n m = return $ ELitInt $ n - m
