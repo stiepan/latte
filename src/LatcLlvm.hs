@@ -17,6 +17,8 @@ import ParLatte
 import PrintLatte
 import SkelLatte
 import qualified Frontend.Check as Check
+import qualified LlvmBackend.Compile as CompileLlvm
+import qualified LlvmBackend.Print as PrintLlvm
 
 
 main :: IO ()
@@ -35,13 +37,14 @@ compileFile f = do
   when (baseName == "")
     (putStrLn "Filename cannot be empty" >> exitFailure)
   source <- readFile f
-  code <- compile source baseName
-  putStrLn $ code
+  latteTree <- parseAndCheck source baseName
+  let llvmTree = CompileLlvm.compile latteTree
+  putStrLn $ PrintLlvm.showModule llvmTree
   exitSuccess
 
 
-compile :: String -> String -> IO String
-compile programText baseName =
+parseAndCheck :: String -> String -> IO Program
+parseAndCheck programText baseName =
   case pProgram (myLexer programText) of
     Bad s -> do
       putStrLn "\nParsing failed\n"
@@ -50,7 +53,7 @@ compile programText baseName =
       exitFailure
     Ok tree -> do
       case Check.check tree of
-        Right optimizedTree -> return $ printTree optimizedTree
+        Right optimizedTree -> return optimizedTree
         Left error -> do
           putStrLn $ show error
           exitFailure
