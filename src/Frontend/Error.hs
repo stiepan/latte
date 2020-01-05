@@ -4,6 +4,7 @@ import Common.Ident
 import Frontend.Show
 import AbsLatte
 
+--todo check literals overflow
 data SemanticError =
   NamesCollision Ident Position Position |
   ArgumentTypeMismatch Ident Position Int Type Type |

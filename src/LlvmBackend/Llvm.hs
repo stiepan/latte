@@ -22,17 +22,17 @@ data GlobalVar = GlobalVar Type String deriving (Show, Eq)
 data StaticLit = StaticLit Lit | StaticStr String deriving (Show, Eq)
 
 
-data Type = TVoid | TInt Int | TPtr Type | TArray Int Type |
+data Type = TVoid | TInt Integer | TPtr Type | TArray Integer Type |
   TLabel | TFunction Signature deriving (Show, Eq)
 
 
 data Var = VGlobal GlobalVar | VLocal String Type | VLit Lit deriving (Show, Eq)
 
 
-data Lit = LInt Int deriving (Show, Eq)
+data Lit = LInt Integer Integer deriving (Show, Eq)
 
 
-newtype Label = Label Int deriving (Show, Eq)
+newtype Label = Label String deriving (Show, Eq)
 
 
 data Block = Block {
@@ -57,14 +57,14 @@ data Function = Func {
 
 
 data MachOp = MO_Add | MO_Sub | MO_Mul | MO_SDiv |
-  MO_SRem | MO_And | MO_Or deriving (Show, Eq)
+  MO_SRem | MO_And | MO_Or | MO_Xor deriving (Show, Eq)
 
 
 data CmpOp = CMP_Eq | CMP_Ne | CMP_Sgt | CMP_Sge |
   CMP_Slt | CMP_Sle deriving (Show, Eq)
 
 
-data Expr = Alloca Int Type | Op MachOp Var Var | Cmp CmpOp Var Var |
+data Expr = Alloca Integer Type | Op MachOp Var Var | Cmp CmpOp Var Var |
   Load Var | GetElemPtr Bool Var [Var] | BitCast Var Type | Call Var [Var] |
   Phi Type [(Var, Var)] deriving (Show, Eq)
 
