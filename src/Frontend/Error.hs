@@ -1,7 +1,7 @@
 module Frontend.Error where
 
 import Common.Ident
-import Frontend.Show
+import Common.Show
 import AbsLatte
 
 --todo check literals overflow

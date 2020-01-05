@@ -1,4 +1,4 @@
-module Frontend.Show where
+module Common.Show where
 
 import Common.Ident
 

@@ -6,7 +6,7 @@ import qualified Frontend.RequiredRetCheck as RequiredRetCheck
 import qualified Frontend.FoldExpr as FoldExpr
 import Frontend.Error
 import Common.Ident
-import Frontend.Show
+import Common.Show
 
 
 check :: AbsLatte.Program -> Either SemanticError AbsLatte.Program

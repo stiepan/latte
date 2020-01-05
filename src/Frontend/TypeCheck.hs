@@ -9,7 +9,7 @@ import Data.Functor.Identity
 import AbsLatte
 import Frontend.Error
 import Common.Ident
-import Frontend.Show
+import Common.Show
 
 
 data Context = Context {
@@ -69,7 +69,7 @@ checkS empty@Empty = return empty
 
 checkS (BStmt block) = do
   oBlock <- checkB block
-  return $ BStmt block
+  return $ BStmt oBlock
 
 checkS (Decl vType items) = do
   oItems <- mapM (declareVariable vType) items

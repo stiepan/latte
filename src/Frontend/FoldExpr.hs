@@ -5,7 +5,7 @@ import Data.Functor.Identity
 
 import Frontend.Error
 import Common.Ident
-import Frontend.Show
+import Common.Show
 import AbsLatte
 
 

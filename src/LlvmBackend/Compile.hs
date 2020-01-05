@@ -8,6 +8,7 @@ import Data.Functor.Identity
 
 import Common.DList
 import Common.Ident
+import Common.Show
 
 import qualified AbsLatte as Latte
 import qualified LlvmBackend.Predefined as Predefined
@@ -138,7 +139,7 @@ compile (Latte.Program topDefs) =
     forwardDeclarations = map toForwardFunDeclaration Predefined.envFunctions
     globalStrLiterals = map (uncurry toStrDefinition) $ Map.toList $ strLiterals env
     ((_, functions), env) = runState (runWriterT $ mapM_ compileTD topDefs) initialEnv
-    predefinedBindings = map funAsBinding Predefined.standardFunctions
+    predefinedBindings = map funAsBinding Predefined.envFunctions
     definedFunctions = map (funAsBinding.topDef2Var) topDefs
     initialEnv = Env (Map.fromList (predefinedBindings ++ definedFunctions)) Map.empty 1
 
@@ -206,7 +207,7 @@ compileArg :: Latte.Arg -> FCompilation Var
 compileArg (Latte.Arg t pIdent) = do
   let (Ident name, _) = pIdent2Ident pIdent
   let argType = latT2Llvm t
-  lVar <- freshLocal (TPtr argType)
+  lVar <- bindVar (Ident name) (TPtr argType)
   emitS $ Assigment lVar $ Alloca 1 argType
   emitS $ Store (VLocal name argType) lVar
   return lVar
@@ -306,7 +307,7 @@ compileSDecl t (Latte.NoInit pIdent) = compileSDecl t (Latte.Init pIdent (defaul
 compileSDecl t (Latte.Init pIdent exp) = do
   rVar <- compileE exp
   let argType = latT2Llvm t
-  lVar <- bindVar (let (name, _) = pIdent2Ident pIdent in name) (TPtr argType)
+  lVar <- bindVar (fst $ pIdent2Ident pIdent) (TPtr argType)
   emitS $ Assigment lVar $ Alloca 1 argType
   emitS $ Store rVar lVar
   return lVar
