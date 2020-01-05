@@ -29,7 +29,7 @@ data Type = TVoid | TInt Integer | TPtr Type | TArray Integer Type |
 data Var = VGlobal GlobalVar | VLocal String Type | VLit Lit deriving (Show, Eq)
 
 
-data Lit = LInt Integer Integer deriving (Show, Eq)
+data Lit = LInt Integer Integer | Null deriving (Show, Eq)
 
 
 newtype Label = Label String deriving (Show, Eq)
@@ -65,9 +65,10 @@ data CmpOp = CMP_Eq | CMP_Ne | CMP_Sgt | CMP_Sge |
 
 
 data Expr = Alloca Integer Type | Op MachOp Var Var | Cmp CmpOp Var Var |
-  Load Var | GetElemPtr Bool Var [Var] | BitCast Var Type | Call Var [Var] |
+  Load Var | GetElemPtr Bool Var [Var] | Call Var [Var] |
   Phi Type [(Var, Var)] deriving (Show, Eq)
+  --BitCast Var Type
 
 
 data Statement = Assigment Var Expr | Branch Var | BranchIf Var Var Var |
-  Store Var Var | Return (Maybe Var) | NOp deriving (Show, Eq)
+  Store Var Var | Return (Maybe Var) | NOp | SExp Expr deriving (Show, Eq)

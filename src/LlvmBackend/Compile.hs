@@ -13,6 +13,7 @@ import Common.Show
 import qualified AbsLatte as Latte
 import qualified LlvmBackend.Predefined as Predefined
 import LlvmBackend.Llvm
+import LlvmBackend.Optimize (essentialOpt)
 
 
 type Statements = DList Statement
@@ -67,6 +68,17 @@ putCBlockM cBlock = do
   lift $ put $ CompState (getEnv state) cBlock
 
 
+flushBlock :: FCompilation ()
+flushBlock = do
+  cBlock <- getCBlockM
+  case toList (getStmts cBlock) of
+    [] -> return ()
+    blockStmts -> do
+      tell $ singleton $ Block (var2Label (getLabel cBlock)) blockStmts
+      label <- freshLabel
+      putCBlockM $ CBlock label mempty
+
+
 emitS :: Statement -> FCompilation ()
 emitS s = do
   cBlock <- getCBlockM
@@ -78,20 +90,20 @@ freshBlock label = do
   cBlock <- getCBlockM
   tell $ singleton $ Block (var2Label (getLabel cBlock)) (toList (getStmts cBlock))
   putCBlockM $ CBlock label mempty
-  where
-    var2Label (VLocal name TLabel) = Label name
 
 
-freshLocal :: Type -> FCompilation Var
-freshLocal t = do
+freshLocalVar :: Type -> String -> FCompilation Var
+freshLocalVar t p = do
   env <- getEnvM
   let rCount = localsCount env
   putEnvM $ Env (bindings env) (strLiterals env) (rCount + 1)
-  return $ VLocal (show rCount) t
+  return $ VLocal (p ++ (show rCount)) t
 
+freshLocal :: Type -> FCompilation Var
+freshLocal t = freshLocalVar t "t"
 
 freshLabel :: FCompilation Var
-freshLabel = freshLocal TLabel
+freshLabel = freshLocalVar TLabel "l"
 
 
 bindVar :: Ident -> Type -> FCompilation Var
@@ -121,7 +133,9 @@ getStrLiteral s = do
       return gVar
       where
         nLiterals = Map.insert s gVar literals
-        gVar = VGlobal $ GlobalVar Predefined.llvmString $ show $ length literals
+        strName = ".str." ++ (show $ length literals)
+        strType = TPtr $ TArray (toInteger (length s + 1)) (TInt 8)
+        gVar = VGlobal $ GlobalVar strType strName
 
 
 capture :: FCompilation a -> FCompilation (a, Blocks)
@@ -134,7 +148,7 @@ capture comp = do
 
 compile :: Latte.Program -> Module
 compile (Latte.Program topDefs) =
-  Module globalStrLiterals forwardDeclarations (toList functions)
+  essentialOpt $ Module globalStrLiterals forwardDeclarations (toList functions)
   where
     forwardDeclarations = map toForwardFunDeclaration Predefined.envFunctions
     globalStrLiterals = map (uncurry toStrDefinition) $ Map.toList $ strLiterals env
@@ -165,7 +179,7 @@ topDef2fName (Latte.FnDef _ pIdent _ _) =
 
 topDef2Sig :: Latte.TopDef -> Signature
 topDef2Sig td@(Latte.FnDef rType pIdent args _) =
-  Sig (topDef2fName td) (latT2Llvm rType) (map latT2Llvm argTypes) Internal
+  Sig (topDef2fName td) (latT2Llvm rType) (map latT2Llvm argTypes) External
   where
     argTypes = map (\(Latte.Arg t _) -> t) args
 
@@ -175,6 +189,10 @@ latT2Llvm Latte.Int = Predefined.llvmInt
 latT2Llvm Latte.Str = Predefined.llvmString
 latT2Llvm Latte.Bool = Predefined.llvmBool
 latT2Llvm Latte.Void = TVoid
+
+
+var2Label :: Var -> Label
+var2Label (VLocal name TLabel) = Label name
 
 
 compileTD :: Latte.TopDef -> TopDefCompilation ()
@@ -191,14 +209,9 @@ compileTD td@(Latte.FnDef rType pIdent args block) = do
 
 compileTDBlock :: [Latte.Arg] -> Latte.Block -> FCompilation ()
 compileTDBlock args block = do
-  if length args > 0 then do
-    mapM_ compileArg args
-    nLabel <- freshLabel
-    emitS $ Branch nLabel
-    freshBlock nLabel
-  else
-    return ()
-  compileB block -- todo ensure last block - if it is nonempty is actually emitted
+  if length args > 0 then mapM_ compileArg args else return ()
+  compileB block
+  flushBlock
   -- todo what about blocks that have ret and br in the next line
   -- todo (remove unreachable code from blocks)
 
@@ -240,13 +253,9 @@ compileS (Latte.Decr pIdent) = compileIncBy pIdent (LInt 32 (-1))
 compileS (Latte.Ret _ exp) = do
   rVar <- compileE exp
   emitS $ Return $ Just rVar
-  nLabel <- freshLabel
-  freshBlock nLabel
 
 compileS (Latte.VRet _) = do
   emitS $ Return $ Nothing
-  nLabel <- freshLabel
-  freshBlock nLabel
 
 compileS (Latte.SExp exp) = do
   rVar <- compileE exp
@@ -332,7 +341,9 @@ compileE Latte.ELitFalse = do
 
 compileE (Latte.EString s) = do
   rVal <- getStrLiteral s
-  return rVal
+  t0 <- freshLocal Predefined.llvmString
+  emitS $ Assigment t0 $ GetElemPtr False rVal [VLit (LInt 32 0), VLit (LInt 32 0)]
+  return t0
 
 compileE (Latte.EApp pIdent exps) =
   compileFunCall (fst $ pIdent2Ident pIdent) exps
@@ -407,7 +418,7 @@ compileBExp exp = do
   emitS $ Branch lCont
   freshBlock lCont
   t0 <- freshLocal Predefined.llvmBool
-  let phi = Phi (Predefined.llvmBool) [(VLit (LInt 1 1), lTrue), (VLit (LInt 1 1), lFalse)]
+  let phi = Phi (Predefined.llvmBool) [(VLit (LInt 1 1), lTrue), (VLit (LInt 1 0), lFalse)]
   emitS $ Assigment t0 $ phi
   return t0
 
@@ -455,9 +466,13 @@ compileFunCall ident exps = do
   env <- getEnvM
   rVars <- mapM compileE exps
   let functionVar = bindings env Map.! ident
-  t0 <- freshLocal (rTypeOfFunction functionVar)
-  emitS $ Assigment t0 $ Call functionVar rVars
-  return t0
+  if rTypeOfFunction functionVar == TVoid then do
+    emitS $ SExp $ Call functionVar rVars
+    return $ VLit Null
+  else do
+    t0 <- freshLocal (rTypeOfFunction functionVar)
+    emitS $ Assigment t0 $ Call functionVar rVars
+    return t0
 
 
 typeOfLVar :: Var -> Type
