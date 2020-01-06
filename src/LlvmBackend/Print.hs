@@ -2,9 +2,11 @@ module LlvmBackend.Print where
 
 import Control.Monad.Trans.Writer
 import Data.Functor.Identity
+import qualified Data.Map.Strict as Map
 
 import Common.DList
 import LlvmBackend.Llvm
+import LlvmBackend.Optimize (blocksPredecessors)
 
 type Printing = WriterT (DList Char) Identity
 
@@ -121,24 +123,36 @@ printFunction (Func fSig aNames funcBody) = do
   emit "define "
   printSig (joinedM ", " $ map (uncurry printNamedArg) $ zip (argTypes fSig) aNames) fSig
   emit " {\n"
-  mapM_ printBlock funcBody
+  let flowMap = blocksPredecessors funcBody
+  mapM_ (printBlock flowMap) funcBody
   emit "}"
 
 
-printBlock :: Block -> Printing ()
-printBlock (Block bId bStmts) = do
-  printLabel bId
+printBlock :: Map.Map Label [Label] -> Block -> Printing ()
+printBlock preds (Block bId bStmts) = do
+  printLabelWithPreds preds bId
   joinedM "\n" $ map (\stmt -> (emit "    ") >> (printStmt stmt)) bStmts
   emit "\n"
 
 
-printLabel :: Label -> Printing ()
-printLabel (Label name) =
+printLabelWithPreds :: Map.Map Label [Label] -> Label -> Printing ()
+printLabelWithPreds preds label@(Label name) =
   if name == "0" then
     return ()
   else do
-    emit name
-    emit ":\n"
+    emitSs [name, ":"]
+    case Map.lookup label preds of
+      Nothing -> return ()
+      Just [] -> return ()
+      Just labels -> do
+        emit "                                    ; preds = "
+        joinedM ", " (map printLabel labels)
+    emit "\n"
+
+
+printLabel :: Label -> Printing ()
+printLabel (Label name) =
+    emitSs ["%", name]
 
 
 printStmt :: Statement -> Printing ()

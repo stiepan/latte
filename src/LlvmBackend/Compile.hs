@@ -213,8 +213,6 @@ compileTDBlock args block = do
   if length args > 0 then mapM_ compileArg args else return ()
   compileB block
   flushBlock
-  -- todo what about blocks that have ret and br in the next line
-  -- todo (remove unreachable code from blocks)
 
 
 compileArg :: Latte.Arg -> FCompilation Var
