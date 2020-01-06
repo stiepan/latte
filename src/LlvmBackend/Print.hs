@@ -162,7 +162,7 @@ printStmt (Store rVal lVal) = do
 
 printStmt (SExp expr) = printExpr expr
 
-printStmt (Return Nothing) = emit "ret"
+printStmt (Return Nothing) = emit "ret void"
 
 printStmt (Return (Just var)) = do
   emit "ret "
@@ -255,9 +255,6 @@ printExpr (GetElemPtr isInbounds base deRefs) = do
   emit "getelementptr "
   if isInbounds then emit "inbounds " else return ()
   joinedM ", " ((printType $ dereferenceType $ typeOfVar base):(map printRVar (base:deRefs)))
-
-printExpr expr = emit $ show expr
---  todo GetElemPtr Bool Var [Var] | BitCast Var Type
 
 
 printMOp :: MachOp -> Printing ()

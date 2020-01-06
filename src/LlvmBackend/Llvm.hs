@@ -45,7 +45,7 @@ data Signature = Sig {
   funcName :: String,
   retType :: Type,
   argTypes :: [Type],
-  funLinkage :: LinkageType -- external by default, todo omit external when printed
+  funLinkage :: LinkageType
 } deriving (Show, Eq)
 
 
