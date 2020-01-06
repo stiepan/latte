@@ -5,7 +5,7 @@ import System.Environment ( getArgs )
 import System.Exit ( exitFailure, exitSuccess )
 import System.IO (writeFile)
 import System.FilePath.Posix (takeExtension, takeBaseName, dropExtension, takeDirectory)
---import System.Process (system)
+import System.Process (system)
 import System.Exit (ExitCode(ExitFailure, ExitSuccess))
 
 import Control.Monad (when)
@@ -39,7 +39,26 @@ compileFile f = do
   source <- readFile f
   latteTree <- parseAndCheck source baseName
   let llvmTree = CompileLlvm.compile latteTree
-  putStrLn $ PrintLlvm.showModule llvmTree
+  let code = PrintLlvm.showModule llvmTree
+  let dir = takeDirectory f
+  let droppedExt = dropExtension f
+  let newFileName = droppedExt ++ ".ll"
+  let bcFName = dir ++ "/" ++ baseName ++ ".bc"
+  writeFile newFileName code
+  putStrLn $ newFileName ++ " has been created"
+  let llvm_as = "llvm-as  " ++ newFileName ++ " -o " ++ bcFName
+  let llvm_link = "llvm-link -o " ++ bcFName ++ " lib/runtime.bc " ++ bcFName
+  let command = llvm_as ++ " && " ++ llvm_link
+  putStrLn command
+  retCode <- system command
+  case retCode of
+    (ExitFailure errCode) -> do
+      putStrLn $ "llvm-as failed with ret code: " ++ (show errCode)
+      putStrLn $ code
+      exitFailure
+    _ -> do
+      putStrLn $ bcFName ++ " has been created"
+      exitSuccess
   exitSuccess
 
 
@@ -47,14 +66,18 @@ parseAndCheck :: String -> String -> IO Program
 parseAndCheck programText baseName =
   case pProgram (myLexer programText) of
     Bad s -> do
-      putStrLn "\nParsing failed\n"
+      putStrLn "ERROR"
+      putStrLn "Parsing failed"
       putStrLn s
       putStrLn programText
       exitFailure
-    Ok tree -> do
+    Ok tree ->
       case Check.check tree of
-        Right optimizedTree -> return optimizedTree
+        Right optimizedTree -> do
+          putStrLn "OK"
+          return optimizedTree
         Left error -> do
+          putStrLn "ERROR"
           putStrLn $ show error
           exitFailure
 

@@ -39,5 +39,6 @@ int __strEq(char * s1, char * s2) {
 }
 
 void error() {
-
+    printf("%s\n", "runtime error");
+    exit(1);
 }
