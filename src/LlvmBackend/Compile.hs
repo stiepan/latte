@@ -70,14 +70,6 @@ putCBlockM cBlock = do
 
 flushBlock :: FCompilation ()
 flushBlock = do
-  cBlock <- getCBlockM
-  case toList (getStmts cBlock) of
-    [] -> return ()
-    _ -> closeAndFlushBlock
-
-
-closeAndFlushBlock :: FCompilation ()
-closeAndFlushBlock = do
   emitS $ Return Nothing -- functions of void type in Latte don't have to
                          -- return explicitly, but they have to in llvm.
                          -- if block already returns something this will be removed

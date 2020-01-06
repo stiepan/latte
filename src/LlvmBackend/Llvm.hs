@@ -32,7 +32,7 @@ data Var = VGlobal GlobalVar | VLocal String Type | VLit Lit deriving (Show, Eq)
 data Lit = LInt Integer Integer | Null deriving (Show, Eq)
 
 
-newtype Label = Label String deriving (Show, Eq)
+newtype Label = Label String deriving (Show, Eq, Ord)
 
 
 data Block = Block {
