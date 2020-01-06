@@ -21,9 +21,13 @@ int readInt() {
 char * readString() {
     char * line = NULL;
     size_t size;
-    if (getline(&line, &size, stdin) == -1) {
-        return EMPTY_STR;
+    int length;
+    while ((length = getline(&line, &size, stdin)) <= 1) {
+        if (length == -1) {
+            return EMPTY_STR;
+        }
     }
+    line[length - 1] = '\0';
     return line;
 }
 

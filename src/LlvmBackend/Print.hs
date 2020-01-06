@@ -58,7 +58,7 @@ printStaticLit :: StaticLit -> Printing ()
 printStaticLit (StaticStr s) = do
   printType $ TArray (toInteger $ length s + 1) (TInt 8)
   emit " c\""
-  emit $ escape '\\' "\\5C" s
+  emit $ escape '"' "\\22" $ escape '\\' "\\5C" s
   emit "\\00\""
 
 

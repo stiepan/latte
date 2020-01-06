@@ -1,0 +1,28 @@
+Kompilator Latte w podstawowej wersji.
+
+Napisany w Haskellu na ghc w wersji 8.6.4
+Zakłada dostępność llvm-as i llvm-link (w wersji 6.0)
+
+Nieznacznie zmodyfikowałem gramatykę żeby otrzymywać pozycję w kodzie słów kluczowych, zmiennych itp.
+(na potrzebę czytelnych komunikatów o błędzie)
+
+lib/runtime.c zawiera implementajcę w C wymaganych wbudowanuch procedur
+oraz procedur odpowiadajacyh za operacje na stringach.
+
+
+Usprawnienia:
+
+Kompilator jeszcze na frontendzie zwija wyrażenia. Usuwa ify z trywialnymi warunkami.
+
+Na backendzie kompilator usuwa nieosiągalny kod w bloku oraz nieosiąglane bloki.
+Upraszcza skoki warunkowe dla trywialnych warunków.
+
+Dzięki temu akceptuje programy postaci
+
+int foo(){
+    while(true) {
+        return 0;
+    }
+}
+
+Generuje informacje o bezpośrednich poprzednikach bloku.

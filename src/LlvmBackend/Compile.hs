@@ -68,7 +68,7 @@ putCBlockM cBlock = do
   lift $ put $ CompState (getEnv state) cBlock
 
 
-flushBlock :: FCompilation ()
+flushBlock :: FCompilation Var
 flushBlock = do
   emitS $ Return Nothing -- functions of void type in Latte don't have to
                          -- return explicitly, but they have to in llvm.
@@ -78,6 +78,7 @@ flushBlock = do
   tell $ singleton $ Block (var2Label (getLabel cBlock)) (toList (getStmts cBlock))
   label <- freshLabel
   putCBlockM $ CBlock label mempty
+  return label
 
 
 emitS :: Statement -> FCompilation ()
@@ -100,8 +101,10 @@ freshLocalVar t p = do
   putEnvM $ Env (bindings env) (strLiterals env) (rCount + 1)
   return $ VLocal (p ++ (show rCount)) t
 
+
 freshLocal :: Type -> FCompilation Var
 freshLocal t = freshLocalVar t "t"
+
 
 freshLabel :: FCompilation Var
 freshLabel = freshLocalVar TLabel "l"
@@ -143,7 +146,7 @@ capture :: FCompilation a -> FCompilation (a, Blocks)
 capture comp = do
   state <- lift get
   let ((res, blocks), nState) = runState (runWriterT comp) state
-  lift $ put $ CompState (getEnv nState) (getCBlock state)
+  lift $ put nState
   return (res, blocks)
 
 
@@ -213,6 +216,7 @@ compileTDBlock args block = do
   if length args > 0 then mapM_ compileArg args else return ()
   compileB block
   flushBlock
+  return ()
 
 
 compileArg :: Latte.Arg -> FCompilation Var
