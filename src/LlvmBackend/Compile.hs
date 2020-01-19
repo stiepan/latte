@@ -1,6 +1,9 @@
 module LlvmBackend.Compile where
 
+import Debug.Trace (trace)
+
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.State
 import Control.Monad.Trans.Writer
@@ -20,12 +23,26 @@ type Statements = DList Statement
 type Blocks = DList Block
 type Functions = DList Function
 
+newtype Location = Loc Integer deriving (Show, Eq, Ord)
+
+data PhiExpr = PhiExpr Type Label [Var] [(Var, Label)] deriving (Show, Eq, Ord)
+  -- block the phi belongs to, users list, phi operands list
+
 data Env = Env {
   -- maps variables names to allocated registers
-  bindings :: Map.Map Ident Var,
-  strLiterals :: Map.Map String Var,
-  localsCount :: Int
-}
+  getProcGlobals :: Map.Map Ident Var,
+  getStrLiterals :: Map.Map String Var,
+  getBindings :: Map.Map Ident Location,
+  getValues :: Map.Map Location (Map.Map Label Var),
+  getSubs :: Map.Map Var Var,
+  getPhis :: Map.Map Var PhiExpr,
+  getIncompletePhis :: Map.Map Label (Map.Map Location Var),
+--  getExprEnumeration :: Map.Map Label (Map.Map Expr Var),
+  getPreds :: Map.Map Label [Label],
+  getSealedBlocks :: Set.Set Label,
+  getRegistersCount :: Integer,
+  getLocation :: Location
+} deriving Show
 
 data CBlock = CBlock {
   getLabel :: Var,
@@ -68,6 +85,18 @@ putCBlockM cBlock = do
   lift $ put $ CompState (getEnv state) cBlock
 
 
+envGetM :: (Env -> a) -> FCompilation a
+envGetM getter = do
+  env <- getEnvM
+  return $ getter env
+
+
+envPutM :: (Env -> Env) -> FCompilation ()
+envPutM updater = do
+  env <- getEnvM
+  putEnvM $ updater env
+
+
 flushBlock :: FCompilation Var
 flushBlock = do
   emitS $ Return Nothing -- functions of void type in Latte don't have to
@@ -94,72 +123,232 @@ freshBlock label = do
   putCBlockM $ CBlock label mempty
 
 
-freshLocalVar :: Type -> String -> FCompilation Var
-freshLocalVar t p = do
-  env <- getEnvM
-  let rCount = localsCount env
-  putEnvM $ Env (bindings env) (strLiterals env) (rCount + 1)
+freshNamedLocal :: Type -> String -> FCompilation Var
+freshNamedLocal t p = do
+  rCount <- envGetM getRegistersCount
+  envPutM $ \env -> env {getRegistersCount = rCount + 1}
   return $ VLocal (p ++ (show rCount)) t
 
 
 freshLocal :: Type -> FCompilation Var
-freshLocal t = freshLocalVar t "t"
+freshLocal t = freshNamedLocal t "t"
 
 
 freshLabel :: FCompilation Var
-freshLabel = freshLocalVar TLabel "l"
+freshLabel = freshNamedLocal TLabel "l"
 
 
-bindVar :: Ident -> Type -> FCompilation Var
-bindVar ident t = do
-  var <- freshLocal t
-  env <- getEnvM
-  let nBindings = (Map.insert ident var (bindings env))
-  let nEnv = Env nBindings (strLiterals env) (localsCount env)
-  putEnvM nEnv
+getBlockPreds :: Label -> FCompilation [Label]
+getBlockPreds bLabel = do
+  preds <- envGetM getPreds
+  return $ case Map.lookup bLabel preds of
+    Nothing -> []
+    Just labels -> labels
+
+
+addBlockPred :: Label -> Label -> FCompilation ()
+addBlockPred bLabel pred = do
+  preds <- getBlockPreds bLabel
+  envPutM $ \env -> env {getPreds = Map.insert bLabel (pred:preds) (getPreds env)}
+
+
+declareVar :: Ident -> FCompilation Location
+declareVar ident = do
+  location@(Loc lCount) <- envGetM getLocation
+  envPutM $ \env -> env {
+    getBindings = Map.insert ident location (getBindings env),
+    getLocation = Loc (lCount + 1)
+    }
+  return location
+
+
+setValAt :: Label -> Var -> Location -> FCompilation ()
+setValAt label var loc = do
+  values <- envGetM getValues
+  let locValues = case Map.lookup loc values of
+        Just locValues -> Map.insert label var locValues
+        Nothing -> Map.singleton label var
+  envPutM $ \env -> env {getValues = Map.insert loc locValues values}
+
+
+setLocalValAt :: Var -> Location -> FCompilation ()
+setLocalValAt var loc = do
+  cBlock <- getCBlockM
+  setValAt (var2Label $ getLabel cBlock) var loc
+
+
+getLocalVal :: Location -> FCompilation Var
+getLocalVal loc = do
+  cBlock <- getCBlockM
+  getVal (var2Label $ getLabel cBlock) loc
+
+
+resolveSubstitution :: Var -> FCompilation Var
+resolveSubstitution var@(VLocal _ _) = do
+  substitution <- envGetM getSubs
+  case Map.lookup var substitution of
+    Nothing -> return var
+    Just sVar -> do
+      sSVar <- resolveSubstitution sVar
+      if sSVar == sVar then
+        return sVar
+      else do
+        envPutM $ \env -> env {getSubs = Map.insert var sSVar (getSubs env)}
+        return sSVar
+
+resolveSubstitution var = return var
+
+
+getVal :: Label -> Location -> FCompilation Var
+getVal label loc = do
+  values <- envGetM getValues
+  var <- case Map.lookup loc values of
+    Nothing -> getValFromPreds label loc
+    Just locValues ->
+      case Map.lookup label locValues of
+        Nothing -> getValFromPreds label loc
+        Just val -> return val
+  resolveSubstitution var
+
+
+getValFromPreds :: Label -> Location -> FCompilation Var
+getValFromPreds label loc = do
+  sealedBlocks <- envGetM getSealedBlocks
+  var <-
+    if not $ Set.member label sealedBlocks then
+      addIncompletePhi label loc
+    else do
+      preds <- getBlockPreds label
+      case preds of
+        [pred] -> getVal pred loc
+        _ -> do
+          mockPhi <- getNewPhi
+          setValAt label mockPhi loc
+          addPhiOperands loc mockPhi
+  setValAt label var loc
   return var
+
+
+addPhiOperands :: Location -> Var -> FCompilation Var
+addPhiOperands loc phi = do
+  (PhiExpr pType bLabel users ops) <- getPhiExpr phi
+  preds <- getBlockPreds bLabel
+  vars <- mapM (\pred -> getVal pred loc) preds
+  mapM_ (registerPhiUser phi) vars
+  let nPhi = PhiExpr (phiType pType vars) bLabel users ((zip vars preds) ++ ops)
+  envPutM $ \env -> env {getPhis = Map.insert phi nPhi (getPhis env)}
+  return phi
+  where
+    phiType TUndefined [] = TUndefined
+    phiType TUndefined (h:_) = typeOfLVar h
+    phiType t _ = t
+
+
+getPhiExpr :: Var -> FCompilation PhiExpr
+getPhiExpr phi = do
+  phis <- envGetM getPhis
+  return $ phis Map.! phi
+
+
+getNewPhi :: FCompilation Var
+getNewPhi = do
+  var <- freshLocal TUndefined
+  cBlock <- getCBlockM
+  let newPhi = PhiExpr TUndefined (var2Label $ getLabel cBlock) [] []
+  envPutM $ \env -> env {getPhis = Map.insert var newPhi (getPhis env)}
+  return var
+
+
+addIncompletePhi :: Label -> Location -> FCompilation Var
+addIncompletePhi label loc = do
+  newPhi <- getNewPhi
+  incPhis <- envGetM getIncompletePhis
+  let blockIncPhis = case Map.lookup label incPhis of
+        Nothing -> Map.singleton loc newPhi
+        Just vars -> Map.insert loc newPhi vars
+  envPutM $ \env -> env {
+    getIncompletePhis = Map.insert label blockIncPhis (getIncompletePhis env)
+    }
+  return newPhi
+
+
+-- keep track of phi's usage as some other phi operand
+registerPhiUser :: Var -> Var -> FCompilation ()
+registerPhiUser userPhi usedPhi = do
+  phis <- envGetM getPhis
+  case Map.lookup usedPhi phis of
+    Nothing -> return ()
+    Just (PhiExpr pType bLabel users ops) -> do
+      let phi = PhiExpr pType bLabel (userPhi:users) ops
+      envPutM $ \env -> env {getPhis = Map.insert usedPhi phi (getPhis env)}
+
+
+removePhiUser :: Var -> Var -> FCompilation ()
+removePhiUser userPhi usedPhi = do
+  phis <- envGetM getPhis
+  case Map.lookup usedPhi phis of
+      Nothing -> return ()
+      Just (PhiExpr pType bLabel users ops) -> do
+        let phi = PhiExpr pType bLabel (filter (userPhi /=) users) ops
+        envPutM $ \env -> env {getPhis = Map.insert usedPhi phi (getPhis env)}
+
+
+replacePhiBy :: Var -> Var -> FCompilation ()
+replacePhiBy phi var =
+  envPutM $ \env -> env {getSubs = Map.insert phi var (getSubs env)}
 
 
 getVar :: Ident -> FCompilation Var
 getVar ident = do
-  env <- getEnvM
-  return $ (bindings env) Map.! ident
+  location <- getVariableLocation ident
+  getLocalVal location
+
+
+getVariableLocation :: Ident -> FCompilation Location
+getVariableLocation ident = do
+  bindings <- envGetM getBindings
+  return $ bindings Map.! ident
 
 
 getStrLiteral :: String -> FCompilation Var
 getStrLiteral s = do
-  env <- getEnvM
-  let literals = strLiterals env
+  literals <- envGetM getStrLiterals
   case Map.lookup s literals of
     Just var -> return var
     Nothing -> do
-      putEnvM $ Env (bindings env) nLiterals (localsCount env)
+      envPutM $ \env -> env {getStrLiterals = nLiterals}
       return gVar
       where
         nLiterals = Map.insert s gVar literals
+        gVar = VGlobal $ GlobalVar strType strName
         strName = ".str." ++ (show $ length literals)
         strType = TPtr $ TArray (toInteger (length s + 1)) (TInt 8)
-        gVar = VGlobal $ GlobalVar strType strName
-
-
-capture :: FCompilation a -> FCompilation (a, Blocks)
-capture comp = do
-  state <- lift get
-  let ((res, blocks), nState) = runState (runWriterT comp) state
-  lift $ put nState
-  return (res, blocks)
 
 
 compile :: Latte.Program -> Module
 compile (Latte.Program topDefs) =
   essentialOpt $ Module globalStrLiterals forwardDeclarations (toList functions)
   where
-    forwardDeclarations = map toForwardFunDeclaration Predefined.envFunctions
-    globalStrLiterals = map (uncurry toStrDefinition) $ Map.toList $ strLiterals env
     ((_, functions), env) = runState (runWriterT $ mapM_ compileTD topDefs) initialEnv
+    globalStrLiterals = map (uncurry toStrDefinition) $ Map.toList $ getStrLiterals env
+
+    initialEnv = Env {
+      getProcGlobals = Map.fromList (predefinedBindings ++ definedFunctions),
+      getStrLiterals = Map.empty,
+      getBindings = Map.empty,
+      getValues = Map.empty,
+      getSubs = Map.empty,
+      getPhis = Map.empty,
+      getIncompletePhis = Map.empty,
+      getPreds = Map.empty,
+      getSealedBlocks = Set.empty,
+      getRegistersCount = 1, -- 0 is for the label of the first block
+      getLocation = Loc 0
+      }
     predefinedBindings = map funAsBinding Predefined.envFunctions
     definedFunctions = map (funAsBinding.topDef2Var) topDefs
-    initialEnv = Env (Map.fromList (predefinedBindings ++ definedFunctions)) Map.empty 1
+
+    forwardDeclarations = map toForwardFunDeclaration Predefined.envFunctions
 
     toStrDefinition :: String -> Var -> GlobalVarDef
     toStrDefinition literal (VGlobal gVar) = GConstDef Internal gVar (StaticStr literal)
@@ -201,40 +390,54 @@ var2Label (VLocal name TLabel) = Label name
 
 compileTD :: Latte.TopDef -> TopDefCompilation ()
 compileTD td@(Latte.FnDef rType pIdent args block) = do
-  env <- lift get
-  let compState = CompState env (CBlock (VLocal "0" TLabel) mempty)
-  let ((_, cBlocks), nCompState) = runState (runWriterT $ compileTDBlock args block) compState
+  initialCompState <- getInitialCompState
+  let ((_, cBlocks), nCompState) = runState (runWriterT $ compileTDBlock args block) initialCompState
   let nEnv = getEnv nCompState
-  lift $ put $ Env (bindings env) (strLiterals nEnv) (localsCount env)
-  tell $ singleton $ Func (topDef2Sig td) (map argName args) (toList cBlocks)
+  lift $ put $ (getEnv initialCompState) {getStrLiterals = getStrLiterals nEnv}
+  tell $ singleton $ Func (topDef2Sig td) (map argName args) (placePhis nEnv (toList cBlocks))
   where
     argName (Latte.Arg _ pIdent) = let (Ident name, _) = pIdent2Ident pIdent in name
+    getInitialCompState = do
+      env <- lift get
+      return $ CompState env (CBlock (VLocal "0" TLabel) mempty)
+
+
+placePhis :: Env -> [Block] -> [Block]
+placePhis env = map $ placePhiInBlock $ getPhis env
+
+
+placePhiInBlock :: (Map.Map Var PhiExpr) -> Block -> Block
+placePhiInBlock phis (Block label stmts) =
+  Block label (foldr appendPhiDefinition stmts blockPhis)
+  where
+    blockPhis = Map.toList $ Map.filter (\(PhiExpr _ phiLabel _ _) -> phiLabel == label) phis
+    appendPhiDefinition :: (Var, PhiExpr) -> [Statement] -> [Statement]
+    appendPhiDefinition (var, (PhiExpr pType _ _ operands)) =
+      (Assigment var (Phi pType (phiOps operands)):)
+    phiOps = map (\(var, (Label name)) -> (var, VLocal name TLabel))
 
 
 compileTDBlock :: [Latte.Arg] -> Latte.Block -> FCompilation ()
 compileTDBlock args block = do
-  if length args > 0 then mapM_ compileArg args else return ()
+  mapM_ compileArg args
   compileB block
   flushBlock
   return ()
 
 
-compileArg :: Latte.Arg -> FCompilation Var
+compileArg :: Latte.Arg -> FCompilation ()
 compileArg (Latte.Arg t pIdent) = do
-  let (Ident name, _) = pIdent2Ident pIdent
-  let argType = latT2Llvm t
-  lVar <- bindVar (Ident name) (TPtr argType)
-  emitS $ Assigment lVar $ Alloca 1 argType
-  emitS $ Store (VLocal name argType) lVar
-  return lVar
+  loc <- declareVar ident
+  setLocalValAt (VLocal name $ latT2Llvm t) loc
+  where
+    ident@(Ident name) = fst $ pIdent2Ident pIdent
 
 
 compileB :: Latte.Block -> FCompilation ()
 compileB (Latte.Block _ stmts _) = do
   env <- getEnvM
   mapM_ compileS stmts
-  nEnv <- getEnvM
-  putEnvM $ Env (bindings env) (strLiterals nEnv) (localsCount nEnv)
+  envPutM $ \nEnv -> nEnv {getBindings = getBindings env}
 
 
 compileS :: Latte.Stmt -> FCompilation ()
@@ -246,8 +449,8 @@ compileS (Latte.Decl t items) = mapM_ (compileSDecl t) items
 
 compileS (Latte.Ass pIdent exp) = do
   rVar <- compileE exp
-  lVar <- getVar $ fst $ pIdent2Ident pIdent
-  emitS $ Store rVar lVar
+  loc <- getVariableLocation $ fst $ pIdent2Ident pIdent
+  setLocalValAt rVar loc
 
 compileS (Latte.Incr pIdent) = compileIncBy pIdent (LInt 32 1)
 
@@ -301,12 +504,11 @@ compileS (Latte.While _ exp stmt) = do
 
 compileIncBy :: Latte.PIdent -> Lit -> FCompilation ()
 compileIncBy pIdent lit = do
-  lVar <- getVar (let (ident, _) = pIdent2Ident pIdent in ident)
-  t0 <- freshLocal Predefined.llvmInt
-  emitS $ Assigment t0 $ Load lVar
-  t1 <- freshLocal Predefined.llvmInt
-  emitS $ Assigment t1 $ Op MO_Add t0 (VLit lit)
-  emitS $ Store t1 lVar
+  let ident = fst $ pIdent2Ident pIdent
+  var <- getVar ident
+  t0 <- peepholeOp MO_Add var (VLit lit)
+  loc <- getVariableLocation ident
+  setLocalValAt var loc
 
 
 compileSDecl :: Latte.Type -> Latte.Item -> FCompilation Var
@@ -318,20 +520,48 @@ compileSDecl t (Latte.NoInit pIdent) = compileSDecl t (Latte.Init pIdent (defaul
 
 compileSDecl t (Latte.Init pIdent exp) = do
   rVar <- compileE exp
-  let argType = latT2Llvm t
-  lVar <- bindVar (fst $ pIdent2Ident pIdent) (TPtr argType)
-  emitS $ Assigment lVar $ Alloca 1 argType
-  emitS $ Store rVar lVar
-  return lVar
+  location <- declareVar (fst $ pIdent2Ident pIdent)
+  setLocalValAt rVar location
+  return rVar
+
+
+peepholeOp :: MachOp -> Var -> Var -> FCompilation Var
+peepholeOp op (VLit (LInt _ 0)) var | op == MO_Add || op == MO_Sub = return var
+
+peepholeOp op var (VLit (LInt _ 0)) | op == MO_Add || op == MO_Sub = return var
+
+peepholeOp op var (VLit (LInt _ 1)) | op == MO_Mul || op == MO_SDiv = return var
+
+peepholeOp MO_Mul (VLit (LInt _ 1)) var = return var
+
+peepholeOp MO_Mul (VLit (LInt p 0)) _ = return $ (VLit (LInt p 0))
+
+peepholeOp MO_Mul _ (VLit (LInt p 0)) = return $ (VLit (LInt p 0))
+
+peepholeOp MO_SDiv _ (VLit (LInt _ 0)) = fail "Division by zero"
+
+peepholeOp MO_Sub lVar rVar | lVar == rVar = return $ (VLit (LInt 32 0))
+
+peepholeOp op (VLit (LInt p n)) (VLit (LInt _ m)) = return $ VLit $ LInt p (evalOp op n m)
+  where
+    evalOp MO_Add = (+)
+    evalOp MO_Sub = (-)
+    evalOp MO_Mul = (*)
+    evalOp MO_SDiv = div
+    evalOp MO_SRem = mod
+    evalOp MO_And = (*)
+    evalOp MO_Or = \n m -> evalOp MO_Xor (evalOp MO_Xor n m) (evalOp MO_And n m)
+    evalOp MO_Xor = \n m -> mod (n + m) 2
+
+peepholeOp op lVar rVar = do
+  t0 <- freshLocal Predefined.llvmInt
+  emitS $ Assigment t0 $ Op op lVar rVar
+  return t0
 
 
 -- todo assure optimal order of expression computation
 compileE :: Latte.Expr -> FCompilation Var
-compileE (Latte.EVar pIdent) = do
-  lVar <- getVar (let (ident, _) = pIdent2Ident pIdent in ident)
-  t0 <- freshLocal (typeOfLVar lVar)
-  emitS $ Assigment t0 $ Load lVar
-  return t0
+compileE (Latte.EVar pIdent) = getVar $ fst $ pIdent2Ident pIdent
 
 compileE (Latte.ELitInt n) = do
   return $ VLit $ LInt 32 n
@@ -466,9 +696,9 @@ compileAOp moOp lExp rExp = do
 
 compileFunCall :: Ident -> [Latte.Expr] -> FCompilation Var
 compileFunCall ident exps = do
-  env <- getEnvM
+  procGlobals <- envGetM getProcGlobals
   rVars <- mapM compileE exps
-  let functionVar = bindings env Map.! ident
+  let functionVar = procGlobals Map.! ident
   if rTypeOfFunction functionVar == TVoid then do
     emitS $ SExp $ Call functionVar rVars
     return $ VLit Null
@@ -480,6 +710,13 @@ compileFunCall ident exps = do
 
 typeOfLVar :: Var -> Type
 typeOfLVar (VLocal _ (TPtr t)) = t
+
+typeOfLVar (VLit lit) = typeOfLit lit
+
+
+typeOfLit :: Lit -> Type
+typeOfLit (LInt precision _) = TInt precision
+
 
 rTypeOfFunction :: Var -> Type
 rTypeOfFunction (VGlobal (GlobalVar (TFunction sig) _)) = retType sig

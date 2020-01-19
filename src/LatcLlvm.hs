@@ -40,6 +40,8 @@ compileFile f = do
   latteTree <- parseAndCheck source baseName
   let llvmTree = CompileLlvm.compile latteTree
   let code = PrintLlvm.showModule llvmTree
+  putStrLn code
+  exitSuccess
   let dir = takeDirectory f
   let droppedExt = dropExtension f
   let newFileName = droppedExt ++ ".ll"
