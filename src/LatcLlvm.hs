@@ -41,7 +41,7 @@ compileFile f = do
   let llvmTree = CompileLlvm.compile latteTree
   let code = PrintLlvm.showModule llvmTree
   putStrLn code
-  exitSuccess
+--  exitSuccess
   let dir = takeDirectory f
   let droppedExt = dropExtension f
   let newFileName = droppedExt ++ ".ll"

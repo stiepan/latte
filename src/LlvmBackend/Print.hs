@@ -109,7 +109,6 @@ printType (TArray n t) = do
   emit "]"
 printType TLabel = emit "label"
 printType (TFunction sig) = printSignature sig
-printType TUndefined = emit "undefined" -- todo remove, it should fail
 
 
 printNamedArg :: Type -> String -> Printing ()

@@ -23,9 +23,7 @@ data StaticLit = StaticLit Lit | StaticStr String deriving (Show, Eq, Ord)
 
 
 data Type = TVoid | TInt Integer | TPtr Type | TArray Integer Type |
-  TLabel | TFunction Signature | TUndefined deriving (Show, Eq, Ord)
-    -- TUndefined is never correct in final syntax, it's used
-    -- temporarily with registers for phis that are being under construction
+  TLabel | TFunction Signature deriving (Show, Eq, Ord)
 
 
 data Var = VGlobal GlobalVar | VLocal String Type | VLit Lit deriving (Show, Eq, Ord)
