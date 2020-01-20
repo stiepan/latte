@@ -78,3 +78,34 @@ blocksPredecessors blocks =
       addBlockToSuccessor :: Label -> Map.Map Label [Label] -> Map.Map Label [Label]
       addBlockToSuccessor sLabel accMap =
         Map.insert sLabel (bLabel:(accMap Map.! sLabel)) accMap
+
+
+replaceRegisters :: Map.Map Var Var -> Block -> Block
+replaceRegisters subs (Block bId stmts) = Block bId (map rS stmts)
+  where
+    r var = Map.findWithDefault var var flatSubs
+    rS (Assigment var expr) = Assigment (r var) (rE expr)
+    rS (Branch var) = Branch (r var)
+    rS (BranchIf cond lT lF) = BranchIf (r cond) (r lT) (r lF)
+    rS (Store var at) = Store (r var) (r at)
+    rS (Return (Just var)) = Return (Just (r var))
+    rS (SExp expr) = SExp (rE expr)
+    rS s = s
+
+    rE (Op op lV rV) = Op op (r lV) (r rV)
+    rE (Cmp op lV rV) = Cmp op (r lV) (r rV)
+    rE (Load var) = Load (r var)
+    rE (GetElemPtr inbound var vars) = GetElemPtr inbound (r var) (map r vars)
+    rE (Call var vars) = Call (r var) (map r vars)
+    rE (Phi t ops) = Phi t (map (\(v, l) -> (r v, l)) ops)
+    rE e = e
+
+    flatSubs = flattenSubs subs
+    flattenSubs :: Map.Map Var Var -> Map.Map Var Var
+    flattenSubs m = Map.fromList items
+      where
+        keys = map fst (Map.toList m)
+        items = [(k, resolve k m) | k <- keys]
+    resolve k m = case Map.lookup k m of
+      Nothing -> k
+      Just v -> resolve v m

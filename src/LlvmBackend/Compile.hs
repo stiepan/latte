@@ -16,7 +16,7 @@ import Common.Show
 import qualified AbsLatte as Latte
 import qualified LlvmBackend.Predefined as Predefined
 import LlvmBackend.Llvm
-import LlvmBackend.Optimize (essentialOpt)
+import LlvmBackend.Optimize (essentialOpt, replaceRegisters)
 
 
 type Statements = DList Statement
@@ -105,7 +105,6 @@ flushBlock = do
                          -- by *removeUnreachableCodeInBlock*
   cBlock <- getCBlockM
   let cLabel = var2Label (getLabel cBlock)
-  sealBlock cLabel
   tell $ singleton $ Block cLabel (toList (getStmts cBlock))
   label <- freshLabel
   putCBlockM $ CBlock label mempty
@@ -123,14 +122,6 @@ freshBlock label = do
   cBlock <- getCBlockM
   tell $ singleton $ Block (var2Label (getLabel cBlock)) (toList (getStmts cBlock))
   putCBlockM $ CBlock label mempty
-
-
-sealAndStartFreshBlock :: Var -> FCompilation ()
-sealAndStartFreshBlock nLabel = do
-  cBlock <- getCBlockM
-  let pLabel = var2Label $ getLabel cBlock
-  freshBlock nLabel
-  sealBlock pLabel
 
 
 freshNamedLocal :: Type -> String -> FCompilation Var
@@ -162,9 +153,10 @@ addBlockPred bLabel pred = do
   envPutM $ \env -> env {getPreds = Map.insert bLabel (pred:preds) (getPreds env)}
 
 
-sealBlock :: Label -> FCompilation ()
-sealBlock label = do
+sealBlock :: Var -> FCompilation ()
+sealBlock vLabel = do
   sealedBlocks <- envGetM getSealedBlocks
+  let label = var2Label vLabel
   case Set.member label sealedBlocks of
     True -> return ()
     False -> do
@@ -256,19 +248,32 @@ getValFromPreds label loc = do
 
 addPhiOperands :: Location -> Var -> FCompilation Var
 addPhiOperands loc phi = do
-  (PhiExpr pType bLabel users ops) <- getPhiExpr phi
-  preds <- getBlockPreds bLabel
-  vars <- mapM (\pred -> getVal pred loc) preds
-  mapM_ (registerPhiUser phi) vars
-  let nPhi = PhiExpr pType bLabel users ((zip vars preds) ++ ops)
-  envPutM $ \env -> env {getPhis = Map.insert phi nPhi (getPhis env)}
-  return phi
+  phiExpr <- getPhiExpr phi
+  case phiExpr of
+    Nothing -> fail $ "Unexpected replaced phi at " ++ show phi
+    Just (PhiExpr pType bLabel users ops) -> do
+      preds <- getBlockPreds bLabel
+      vars <- mapM (\pred -> getVal pred loc) preds
+      mapM_ (registerPhiUser phi) vars
+      let nPhi = PhiExpr pType bLabel users ((zip vars preds) ++ ops)
+      envPutM $ \env -> env {getPhis = Map.insert phi nPhi (getPhis env)}
+      tryRemoveTrivialPhi phi
 
 
-getPhiExpr :: Var -> FCompilation PhiExpr
+getPhiExpr :: Var -> FCompilation (Maybe PhiExpr)
 getPhiExpr phi = do
   phis <- envGetM getPhis
-  return $ phis Map.! phi
+  case Map.lookup phi phis of
+    Nothing -> return Nothing
+    Just (PhiExpr t l users ops) -> do
+      rOps <- mapM resolveSubs ops
+      let nPhiExpr = PhiExpr t l users rOps
+      envPutM $ \env -> env {getPhis = Map.insert phi nPhiExpr (getPhis env)}
+      return $ Just nPhiExpr
+  where
+    resolveSubs (var, label) = do
+      rVar <- resolveSubstitution var
+      return (rVar, label)
 
 
 getNewPhi :: Type -> Label -> FCompilation Var
@@ -304,19 +309,34 @@ registerPhiUser userPhi usedPhi = do
       envPutM $ \env -> env {getPhis = Map.insert usedPhi phi (getPhis env)}
 
 
-removePhiUser :: Var -> Var -> FCompilation ()
-removePhiUser userPhi usedPhi = do
-  phis <- envGetM getPhis
-  case Map.lookup usedPhi phis of
-      Nothing -> return ()
-      Just (PhiExpr pType bLabel users ops) -> do
-        let phi = PhiExpr pType bLabel (filter (userPhi /=) users) ops
-        envPutM $ \env -> env {getPhis = Map.insert usedPhi phi (getPhis env)}
+tryRemoveTrivialPhi :: Var -> FCompilation Var
+tryRemoveTrivialPhi phi = do
+  phiExpr <- getPhiExpr phi
+  case phiExpr of
+    Nothing -> resolveSubstitution phi
+    Just (PhiExpr t l users ops) -> do
+      let vOps = map fst ops
+      let nonSelf = filter (phi /=) vOps
+      if hasDifferentValues nonSelf then
+        return phi
+      else do
+        let var = subsBy nonSelf
+        replacePhiBy phi var
+        mapM_ tryRemoveTrivialPhi users
+        return var
+  where
+    hasDifferentValues [] = False
+    hasDifferentValues (h:t) = foldr (\e acc -> acc || h /= e) False t
+    subsBy [] = VLit Null
+    subsBy (h:_) = h
 
 
 replacePhiBy :: Var -> Var -> FCompilation ()
-replacePhiBy phi var =
-  envPutM $ \env -> env {getSubs = Map.insert phi var (getSubs env)}
+replacePhiBy phi var = do
+  envPutM $ \env -> env {
+    getSubs = Map.insert phi var (getSubs env),
+    getPhis = Map.delete phi (getPhis env)
+    }
 
 
 getVar :: Ident -> FCompilation Var
@@ -415,7 +435,7 @@ compileTD td@(Latte.FnDef rType pIdent args block) = do
   let ((_, cBlocks), nCompState) = runState (runWriterT $ compileTDBlock args block) initialCompState
   let nEnv = getEnv nCompState
   lift $ put $ (getEnv initialCompState) {getStrLiterals = getStrLiterals nEnv}
-  tell $ singleton $ Func (topDef2Sig td) (map argName args) (placePhis nEnv (toList cBlocks))
+  tell $ singleton $ Func (topDef2Sig td) (map argName args) (placePhisAndSubs nEnv (toList cBlocks))
   where
     argName (Latte.Arg _ pIdent) = let (Ident name, _) = pIdent2Ident pIdent in name
     getInitialCompState = do
@@ -423,11 +443,11 @@ compileTD td@(Latte.FnDef rType pIdent args block) = do
       return $ CompState env (CBlock (VLocal "0" TLabel) mempty)
 
 
-placePhis :: Env -> [Block] -> [Block]
-placePhis env = map $ placePhiInBlock $ getPhis env
+placePhisAndSubs :: Env -> [Block] -> [Block]
+placePhisAndSubs env = map ((replaceRegisters (getSubs env)).(placePhiInBlock (getPhis env)))
 
 
-placePhiInBlock :: (Map.Map Var PhiExpr) -> Block -> Block
+placePhiInBlock :: Map.Map Var PhiExpr -> Block -> Block
 placePhiInBlock phis (Block label stmts) =
   Block label (foldr appendPhiDefinition stmts blockPhis)
   where
@@ -440,6 +460,8 @@ placePhiInBlock phis (Block label stmts) =
 
 compileTDBlock :: [Latte.Arg] -> Latte.Block -> FCompilation ()
 compileTDBlock args block = do
+  cBlock <- getCBlockM
+  sealBlock (getLabel cBlock) -- it's not possible to jump to the beginning of the function
   mapM_ compileArg args
   compileB block
   flushBlock
@@ -493,36 +515,43 @@ compileS (Latte.Cond _ exp stmt) = do
   lTrue <- freshLabel
   lCont <- freshLabel
   compileBool exp lTrue lCont
-  sealAndStartFreshBlock lTrue
+  sealBlock lTrue
+  freshBlock lTrue
   compileS stmt
   emitBranch lCont
-  sealAndStartFreshBlock lCont
+  sealBlock lCont
+  freshBlock lCont
 
 compileS (Latte.CondElse _ exp tStmt _ fStmt) = do
   lTrue <- freshLabel
   lFalse <- freshLabel
   lCont <- freshLabel
   compileBool exp lTrue lFalse
-  sealAndStartFreshBlock lTrue
+  sealBlock lTrue
+  freshBlock lTrue
   compileS tStmt
   emitBranch lCont
-  sealAndStartFreshBlock lFalse
+  sealBlock lFalse
+  freshBlock lFalse
   compileS fStmt
   emitBranch lCont
-  sealAndStartFreshBlock lCont
+  sealBlock lCont
+  freshBlock lCont
 
 compileS (Latte.While _ exp stmt) = do
   condLabel <- freshLabel
   bodyLabel <- freshLabel
   contLabel <- freshLabel
   emitBranch condLabel
-  sealAndStartFreshBlock bodyLabel
+  freshBlock bodyLabel
   compileS stmt
   emitBranch condLabel
+  sealBlock condLabel
   freshBlock condLabel
   compileBool exp bodyLabel contLabel
-  sealAndStartFreshBlock contLabel
-  sealBlock $ var2Label bodyLabel
+  freshBlock contLabel
+  sealBlock bodyLabel
+  sealBlock contLabel
 
 
 compileIncBy :: Latte.PIdent -> Lit -> FCompilation ()
@@ -684,11 +713,14 @@ compileBExp exp = do
   lFalse <- freshLabel
   lCont <- freshLabel
   compileBool exp lTrue lFalse
-  sealAndStartFreshBlock lTrue
+  sealBlock lTrue
+  freshBlock lTrue
   emitBranch lCont
-  sealAndStartFreshBlock lFalse
+  sealBlock lFalse
+  freshBlock lFalse
   emitBranch lCont
-  sealAndStartFreshBlock lCont
+  sealBlock lCont
+  freshBlock lCont
   t0 <- freshLocal Predefined.llvmBool
   let phi = Phi (Predefined.llvmBool) [(VLit (LInt 1 1), lTrue), (VLit (LInt 1 0), lFalse)]
   emitS $ Assigment t0 $ phi
@@ -699,13 +731,15 @@ compileBool :: Latte.Expr -> Var -> Var -> FCompilation ()
 compileBool (Latte.EAnd expL _ expR) lTrue lFalse = do
   lMid <- freshLabel
   compileBool expL lMid lFalse
-  sealAndStartFreshBlock lMid
+  sealBlock lMid
+  freshBlock lMid
   compileBool expR lTrue lFalse
 
 compileBool (Latte.EOr expL _ expR) lTrue lFalse = do
   lMid <- freshLabel
   compileBool expL lTrue lMid
-  sealAndStartFreshBlock lMid
+  sealBlock lMid
+  freshBlock lMid
   compileBool expR lTrue lFalse
 
 compileBool (Latte.Not _ exp) lTrue lFalse = compileBool exp lFalse lTrue
