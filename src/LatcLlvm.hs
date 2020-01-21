@@ -39,30 +39,37 @@ compileFile f = do
   source <- readFile f
   latteTree <- parseAndCheck source baseName
   let llvmTree = CompileLlvm.compile latteTree
-  let code = PrintLlvm.showModule llvmTree
-  putStrLn code
---  exitSuccess
-  let dir = takeDirectory f
-  let droppedExt = dropExtension f
-  let newFileName = droppedExt ++ ".ll"
-  let bcFName = dir ++ "/" ++ baseName ++ ".bc"
-  writeFile newFileName code
-  putStrLn $ newFileName ++ " has been created"
-  executablePath <- getExecutablePath
-  let runtimeLibPath = takeDirectory executablePath ++ "/lib/runtime.bc"
-  let llvm_as = "llvm-as  " ++ newFileName ++ " -o " ++ bcFName
-  let llvm_link = "llvm-link -o " ++ bcFName ++ " " ++ runtimeLibPath ++ " " ++ bcFName
-  let command = llvm_as ++ " && " ++ llvm_link
-  putStrLn command
-  retCode <- system command
-  case retCode of
-    (ExitFailure errCode) -> do
-      putStrLn $ "llvm-as failed with ret code: " ++ (show errCode)
+  case llvmTree of
+    Left error -> do
+      putStrLn "ERROR"
+      putStrLn $ show error
       exitFailure
-    _ -> do
-      putStrLn $ bcFName ++ " has been created"
+    Right llvmTree -> do
+      putStrLn "OK"
+      let code = PrintLlvm.showModule llvmTree
+--      putStrLn code
+    --  exitSuccess
+      let dir = takeDirectory f
+      let droppedExt = dropExtension f
+      let newFileName = droppedExt ++ ".ll"
+      let bcFName = dir ++ "/" ++ baseName ++ ".bc"
+      writeFile newFileName code
+      putStrLn $ newFileName ++ " has been created"
+      executablePath <- getExecutablePath
+      let runtimeLibPath = takeDirectory executablePath ++ "/lib/runtime.bc"
+      let llvm_as = "llvm-as  " ++ newFileName ++ " -o " ++ bcFName
+      let llvm_link = "llvm-link -o " ++ bcFName ++ " " ++ runtimeLibPath ++ " " ++ bcFName
+      let command = llvm_as ++ " && " ++ llvm_link
+      putStrLn command
+      retCode <- system command
+      case retCode of
+        (ExitFailure errCode) -> do
+          putStrLn $ "llvm-as failed with ret code: " ++ (show errCode)
+          exitFailure
+        _ -> do
+          putStrLn $ bcFName ++ " has been created"
+          exitSuccess
       exitSuccess
-  exitSuccess
 
 
 parseAndCheck :: String -> String -> IO Program
@@ -76,10 +83,7 @@ parseAndCheck programText baseName =
       exitFailure
     Ok tree ->
       case Check.check tree of
-        Right optimizedTree -> do
-          putStrLn $ show optimizedTree
-          putStrLn "OK"
-          return optimizedTree
+        Right overloadedTree -> return overloadedTree
         Left error -> do
           putStrLn "ERROR"
           putStrLn $ show error

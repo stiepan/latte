@@ -6,7 +6,7 @@ import qualified Data.Map.Strict as Map
 
 import Common.DList
 import LlvmBackend.Llvm
-import LlvmBackend.Optimize (blocksPredecessors)
+import LlvmBackend.Normalize (blocksPredecessors)
 
 type Printing = WriterT (DList Char) Identity
 

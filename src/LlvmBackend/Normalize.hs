@@ -1,14 +1,39 @@
-module LlvmBackend.Optimize where
+module LlvmBackend.Normalize where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
+
 import LlvmBackend.Llvm
 
 
-essentialOpt :: Module -> Module
-essentialOpt (Module gs fDs fs) =
-  Module gs fDs (map essentialFunctionOpt fs)
+returnsCorrectly :: Function -> Bool
+returnsCorrectly (Func _ _ funcBody) = returnsCorrectlyBs funcBody
+
+
+returnsCorrectlyBs :: [Block] -> Bool
+returnsCorrectlyBs blocks =
+  leadingToRet == Set.fromList lBlocks
+  where
+  lBlocks = map blockId blocks
+  ps = blocksPredecessors blocks
+  retBlocks = filter isRetBlock blocks
+  isRetBlock :: Block -> Bool
+  isRetBlock (Block bId stmts) = foldr (\e acc -> isRetStmt e || acc) False stmts
+  isRetStmt (Return _) = True
+  isRetStmt _ = False
+  leadingToRet = foldr (traverseFrom ps) Set.empty (map blockId retBlocks)
+  traverseFrom ps node visited = dfs ps [node] visited
+  dfs _ [] visited = visited
+  dfs ns (q:qs) visited =
+    if Set.member q visited then
+      dfs ns qs visited
+    else
+      let neighbours = case Map.lookup q ns of
+            Nothing -> []
+            Just l -> l
+      in
+      dfs ns (neighbours ++ qs) (Set.insert q visited)
 
 
 essentialFunctionOpt :: Function -> Function
@@ -18,7 +43,6 @@ essentialFunctionOpt (Func fSig aNames funcBody) =
     nFuncBody = removeUnreachableBlocks $ map (foldr (.) id optimizations) funcBody
     optimizations = [
       removeUnreachableCodeInBlock
---      replaceBranchIfWithBranch
       ]
 
 
@@ -33,17 +57,6 @@ removeUnreachableBlocks blocks@(eB:bs) =
       case Map.lookup label blocksMap of
         Nothing -> traverse labels blocksMap
         Just block -> traverse (blockSuccessors block ++ labels) (Map.delete label blocksMap)
-
-
-replaceBranchIfWithBranch :: Block -> Block
-replaceBranchIfWithBranch (Block bId bStmts) =
-  (Block bId (map foldBranchIf bStmts))
-  where
-    foldBranchIf stmt@(BranchIf (VLit (LInt 1 n)) lT lF) = Branch (pickLabel n lT lF)
-    foldBranchIf stmt@(BranchIf _ lT lF) | lT == lF = Branch lT
-    foldBranchIf stmt = stmt
-    pickLabel 0 _ lF = lF
-    pickLabel _ lT _ = lT
 
 
 removeUnreachableCodeInBlock :: Block -> Block

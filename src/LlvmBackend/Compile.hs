@@ -1,12 +1,13 @@
 module LlvmBackend.Compile where
 
-import Debug.Trace (trace)
+--import Debug.Trace (trace)
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.State
 import Control.Monad.Trans.Writer
+import Control.Monad.Trans.Except
 import Data.Functor.Identity
 
 import Common.DList
@@ -16,7 +17,8 @@ import Common.Show
 import qualified AbsLatte as Latte
 import qualified LlvmBackend.Predefined as Predefined
 import LlvmBackend.Llvm
-import LlvmBackend.Optimize (essentialOpt, replaceRegisters)
+import LlvmBackend.Normalize (returnsCorrectly, essentialFunctionOpt, replaceRegisters)
+import Frontend.Error
 
 
 type Statements = DList Statement
@@ -51,14 +53,15 @@ data CBlock = CBlock {
 
 data CompState = CompState {
   getEnv :: Env,
-  getCBlock :: CBlock
+  getCBlock :: CBlock,
+  getRetType :: Latte.Type -- ret type of currently compiled function
 }
 
 
 type FCompilation = WriterT Blocks (StateT CompState Identity)
 
 
-type TopDefCompilation = WriterT Functions (StateT Env Identity)
+type TopDefCompilation = ExceptT SemanticError (WriterT Functions (StateT Env Identity))
 
 
 getEnvM :: FCompilation Env
@@ -70,7 +73,7 @@ getEnvM = do
 putEnvM :: Env -> FCompilation ()
 putEnvM env = do
   state <- lift get
-  lift $ put $ CompState env (getCBlock state)
+  lift $ put $ state {getEnv = env}
 
 
 getCBlockM :: FCompilation CBlock
@@ -82,7 +85,13 @@ getCBlockM = do
 putCBlockM :: CBlock -> FCompilation ()
 putCBlockM cBlock = do
   state <- lift get
-  lift $ put $ CompState (getEnv state) cBlock
+  lift $ put $ state {getCBlock = cBlock}
+
+
+getRetTypeM :: FCompilation Latte.Type
+getRetTypeM = do
+  state <- lift get
+  return $ getRetType state
 
 
 envGetM :: (Env -> a) -> FCompilation a
@@ -99,10 +108,13 @@ envPutM updater = do
 
 flushBlock :: FCompilation Var
 flushBlock = do
-  emitS $ Return Nothing -- functions of void type in Latte don't have to
-                         -- return explicitly, but they have to in llvm.
-                         -- if block already returns something this will be removed
-                         -- by *removeUnreachableCodeInBlock*
+  rType <- getRetTypeM
+  if rType == Latte.Void then
+    emitS $ Return Nothing -- functions of void type in Latte don't have to
+                           -- return explicitly, but they have to in llvm.
+                           -- if block already returns something this will be removed
+                           -- by *removeUnreachableCodeInBlock*
+  else return ()
   cBlock <- getCBlockM
   let cLabel = var2Label (getLabel cBlock)
   tell $ singleton $ Block cLabel (toList (getStmts cBlock))
@@ -366,11 +378,13 @@ getStrLiteral s = do
         strType = TPtr $ TArray (toInteger (length s + 1)) (TInt 8)
 
 
-compile :: Latte.Program -> Module
+compile :: Latte.Program -> Either SemanticError Module
 compile (Latte.Program topDefs) =
-  essentialOpt $ Module globalStrLiterals forwardDeclarations (toList functions)
+  case res of
+    Left error -> Left error
+    _ -> Right $ Module globalStrLiterals forwardDeclarations (toList functions)
   where
-    ((_, functions), env) = runState (runWriterT $ mapM_ compileTD topDefs) initialEnv
+    ((res, functions), env) = runState (runWriterT $ runExceptT $ mapM_ compileTD topDefs) initialEnv
     globalStrLiterals = map (uncurry toStrDefinition) $ Map.toList $ getStrLiterals env
 
     initialEnv = Env {
@@ -434,13 +448,18 @@ compileTD td@(Latte.FnDef rType pIdent args block) = do
   initialCompState <- getInitialCompState
   let ((_, cBlocks), nCompState) = runState (runWriterT $ compileTDBlock args block) initialCompState
   let nEnv = getEnv nCompState
-  lift $ put $ (getEnv initialCompState) {getStrLiterals = getStrLiterals nEnv}
-  tell $ singleton $ Func (topDef2Sig td) (map argName args) (placePhisAndSubs nEnv (toList cBlocks))
+  lift $ lift $ put $ (getEnv initialCompState) {getStrLiterals = getStrLiterals nEnv}
+  let func = essentialFunctionOpt $ Func (topDef2Sig td) (map argName args) (placePhisAndSubs nEnv (toList cBlocks))
+  if not $ returnsCorrectly func then
+    throwE $ ProcWithoutReturn (fst $ pIdent2Ident pIdent)
+--    fail $ "Function " ++ pIdent2Name pIdent ++ " of type " ++ show rType ++ " exits without returing anything"
+  else lift $ tell $ singleton func
   where
-    argName (Latte.Arg _ pIdent) = let (Ident name, _) = pIdent2Ident pIdent in name
+    argName (Latte.Arg _ pIdent) = pIdent2Name pIdent
+    pIdent2Name pIdent = let (Ident name, _) = pIdent2Ident pIdent in name
     getInitialCompState = do
-      env <- lift get
-      return $ CompState env (CBlock (VLocal "0" TLabel) mempty)
+      env <- lift $ lift get
+      return $ CompState env (CBlock (VLocal "0" TLabel) mempty) rType
 
 
 placePhisAndSubs :: Env -> [Block] -> [Block]
@@ -698,7 +717,7 @@ compileE bExp@(Latte.EOr _ _ _) = compileBExp bExp
 compileE bExp@(Latte.Not _ _) = compileBExp bExp
 
 
--- todo use capture to merge lTrue and LFalse blocks into one with bigger phi
+-- todo merge lTrue and LFalse blocks into one with bigger phi
 compileBExp :: Latte.Expr -> FCompilation Var
 compileBExp exp = do
   lTrue <- freshLabel
@@ -725,7 +744,6 @@ compileBExp exp = do
 compileBool :: Latte.Expr -> Var -> Var -> FCompilation Var
 compileBool expr lTrue lFalse = do
   sExpr <- foldBoolean expr
-  trace (show expr ++ " \n " ++ (show sExpr) ++ "\n\n\n") (return ())
   case sExpr of
     Latte.ELitTrue -> return $ VLit (LInt 1 1)
     Latte.ELitFalse -> return $ VLit (LInt 1 0)
