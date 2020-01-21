@@ -109,7 +109,7 @@ replaceRegisters subs (Block bId stmts) = Block bId (map rS stmts)
     rE (Cmp op lV rV) = Cmp op (r lV) (r rV)
     rE (Load var) = Load (r var)
     rE (GetElemPtr inbound var vars) = GetElemPtr inbound (r var) (map r vars)
-    rE (Call var vars) = Call (r var) (map r vars)
+    rE (Call enumerable var vars) = Call enumerable (r var) (map r vars)
     rE (Phi t ops) = Phi t (map (\(v, l) -> (r v, l)) ops)
     rE e = e
 

@@ -1,28 +1,42 @@
-Kompilator Latte w podstawowej wersji.
+Compilers construction 2nd assignment
 
-Napisany w Haskellu na ghc w wersji 8.6.4
-Zakłada dostępność llvm-as i llvm-link (w wersji 6.0)
+Compiler of simple imperative language for llvm
 
-Nieznacznie zmodyfikowałem gramatykę żeby otrzymywać pozycję w kodzie słów kluczowych, zmiennych itp.
-(na potrzebę czytelnych komunikatów o błędzie)
+Optimizations:
+1. constants propagation
+2. copy propagation
+3. expressions folding
+4. local common subexpression elimination
+4a. there's a variant of simple global common subexpression elimination but
+at this point it's inefficient and doesn't handle cycles in flow graph very well
+5. some peepholes optimizations
 
-lib/runtime.c zawiera implementajcę w C wymaganych wbudowanuch procedur
-oraz procedur odpowiadajacyh za operacje na stringach.
+For instance:
 
-
-Usprawnienia:
-
-Kompilator jeszcze na frontendzie zwija wyrażenia. Usuwa ify z trywialnymi warunkami.
-
-Na backendzie kompilator usuwa nieosiągalny kod w bloku oraz nieosiąglane bloki.
-Upraszcza skoki warunkowe dla trywialnych warunków.
-
-Dzięki temu akceptuje programy postaci
-
-int foo(){
-    while(true) {
-        return 0;
+    string a = "aaa";
+    string b = "aaa";
+    string c = a + "bb";
+    string d = b + "bb";
+    if (c == d) {
+        printString(a + b);
     }
+    if (a + "bb" == "aaa" + "bb") {
+        printString(b + a);
+    }
+    return 0;
+
+results in the following llvm code
+define i32 @main() {
+    %t1 = getelementptr [4 x i8], [4 x i8]* @.str.0, i32 0, i32 0
+    %t2 = getelementptr [3 x i8], [3 x i8]* @.str.1, i32 0, i32 0
+    %t3 = call i8* @__concat(i8* %t1, i8* %t2)
+    %t6 = call i8* @__concat(i8* %t1, i8* %t1)
+    call void @printString(i8* %t6)
+    call void @printString(i8* %t6)
+    ret i32 0
 }
 
-Generuje informacje o bezpośrednich poprzednikach bloku.
+------------------------------------------
+Compiled with ghc 8.6.4
+Uses llvm-as and llvm-link (6.0)
+

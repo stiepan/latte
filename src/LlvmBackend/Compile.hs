@@ -1,6 +1,6 @@
 module LlvmBackend.Compile where
 
---import Debug.Trace (trace)
+import Debug.Trace (trace)
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -39,7 +39,7 @@ data Env = Env {
   getSubs :: Map.Map Var Var,
   getPhis :: Map.Map Var PhiExpr,
   getIncompletePhis :: Map.Map Label (Map.Map Location Var),
---  getExprEnumeration :: Map.Map Label (Map.Map Expr Var),
+  getExprEnumeration :: Map.Map Label (Map.Map Expr Var),
   getPreds :: Map.Map Label [Label],
   getSealedBlocks :: Set.Set Label,
   getRegistersCount :: Integer,
@@ -395,6 +395,7 @@ compile (Latte.Program topDefs) =
       getSubs = Map.empty,
       getPhis = Map.empty,
       getIncompletePhis = Map.empty,
+      getExprEnumeration = Map.empty,
       getPreds = Map.empty,
       getSealedBlocks = Set.empty,
       getRegistersCount = 1, -- 0 is for the label of the first block
@@ -533,7 +534,7 @@ compileS (Latte.SExp exp) = do
 compileS (Latte.Cond _ exp stmt) = do
   lTrue <- freshLabel
   lCont <- freshLabel
-  cond <- optimizeE $ compileBool exp lTrue lCont
+  cond <- compileBool exp lTrue lCont
   case cond of
     VLit (LInt _ n) ->
       case n of
@@ -635,6 +636,86 @@ emitBranchIf cond lTrue lFalse =
       emitS $ BranchIf cond lTrue lFalse
 
 
+getRegWith :: Type -> Expr -> FCompilation Var
+getRegWith t expr = do
+  case expr of
+    (Op _ _ _) -> getOrEmitReg t expr
+    (Cmp _ _ _) -> getOrEmitReg t expr
+    (GetElemPtr _ _ _) -> getOrEmitReg t expr
+    (Phi _ _) -> getOrEmitReg t expr
+    (Call True _ _) -> getOrEmitReg t expr
+    _ -> emitReg t expr
+
+
+getExistingReg :: Label -> Expr -> FCompilation (Maybe Var)
+getExistingReg label expr = do
+  enumeration <- envGetM getExprEnumeration
+  return $ case Map.lookup label enumeration of
+    Nothing -> Nothing
+    Just exps -> Map.lookup expr exps
+
+
+getExistingRegRec :: Label -> Expr -> FCompilation (Maybe Var)
+getExistingRegRec label expr =
+  traverseRec label expr []
+  where
+  traverseRec label expr visited = do
+    if label `elem` visited then
+      return Nothing
+    else do
+      var <- getExistingReg label expr
+      case var of
+        Just var -> return $ Just var
+        Nothing -> do
+          sealedBlocks <- envGetM getSealedBlocks
+          if not $ Set.member label sealedBlocks then
+            return Nothing
+          else do
+            preds <- getBlockPreds label
+            predVals <- mapM (\pred -> traverseRec pred expr (label:visited)) preds
+            if any (Nothing ==) predVals then
+              return Nothing
+            else
+              case predVals of
+                (Just var):_ -> do
+                  var <- registerNewReg label expr var
+                  return $ Just var
+                _ -> return Nothing
+
+
+getOrEmitReg :: Type -> Expr -> FCompilation Var
+getOrEmitReg t expr = do
+  cBlock <- getCBlockM
+  let cLabel = var2Label $ getLabel cBlock
+  existingVar <- getExistingRegRec cLabel expr
+  case existingVar of
+    Nothing -> emitAndRecNewReg cLabel t expr
+    Just var -> return var
+
+
+emitAndRecNewReg :: Label -> Type -> Expr -> FCompilation Var
+emitAndRecNewReg label t expr = do
+  var <- emitReg t expr
+  registerNewReg label expr var
+
+
+registerNewReg :: Label -> Expr -> Var -> FCompilation Var
+registerNewReg label expr var = do
+  enumeration <- envGetM getExprEnumeration
+  let nExps = case Map.lookup label enumeration of
+        Nothing -> Map.singleton expr var
+        Just exps -> Map.insert expr var exps
+  envPutM $ \env -> env {getExprEnumeration = Map.insert label nExps enumeration}
+  return var
+
+
+emitReg :: Type -> Expr -> FCompilation Var
+emitReg t expr = do
+  t0 <- freshLocal t
+  emitS $ Assigment t0 expr
+  return t0
+
+
 -- todo assure optimal order of expression computation
 compileE :: Latte.Expr -> FCompilation Var
 compileE (Latte.EVar pIdent) = getVar $ fst $ pIdent2Ident pIdent
@@ -650,12 +731,10 @@ compileE Latte.ELitFalse = do
 
 compileE (Latte.EString s) = do
   rVal <- getStrLiteral s
-  t0 <- freshLocal Predefined.llvmString
-  emitS $ Assigment t0 $ GetElemPtr False rVal [VLit (LInt 32 0), VLit (LInt 32 0)]
-  return t0
+  getRegWith (Predefined.llvmString) $ GetElemPtr False rVal [VLit (LInt 32 0), VLit (LInt 32 0)]
 
 compileE (Latte.EApp pIdent exps) =
-  compileFunCall (fst $ pIdent2Ident pIdent) exps
+  compileFunCall False (fst $ pIdent2Ident pIdent) exps
 
 compileE (Latte.Neg _ exp) = do
   rVar <- optimizeE $ compileE exp
@@ -674,7 +753,7 @@ compileE (Latte.EAdd lExp (Latte.OverloadedPlus Latte.Int _) rExp) =
   compileAOp MO_Add lExp rExp
 
 compileE (Latte.EAdd lExp (Latte.OverloadedPlus Latte.Str _) rExp) =
-  compileFunCall (nameOfFunction Predefined.internalConcat) [lExp, rExp]
+  compileFunCall True (nameOfFunction Predefined.internalConcat) [lExp, rExp]
 
 compileE (Latte.ERel lExp (Latte.LTH _) rExp) = compileCmpOp CMP_Slt lExp rExp
 
@@ -690,8 +769,13 @@ compileE (Latte.ERel lExp (Latte.OverloadedEQU Latte.Int _) rExp) =
 compileE (Latte.ERel lExp (Latte.OverloadedEQU Latte.Bool _) rExp) =
   compileCmpOp CMP_Eq lExp rExp
 
-compileE (Latte.ERel lExp (Latte.OverloadedEQU Latte.Str _) rExp) =
-  compileFunCall (nameOfFunction Predefined.internalStringEq) [lExp, rExp]
+compileE (Latte.ERel lExp (Latte.OverloadedEQU Latte.Str _) rExp) = do
+  lVar <- optimizeE $ compileE lExp
+  rVar <- optimizeE $ compileE rExp
+  if lVar == rVar then
+    return $ boolLiteral True
+  else
+    compileFunCallWithRegs True (nameOfFunction Predefined.internalStringEq) [lVar, rVar]
 
 compileE (Latte.ERel lExp (Latte.OverloadedNE Latte.Int _) rExp) =
   compileCmpOp CMP_Ne lExp rExp
@@ -703,12 +787,10 @@ compileE (Latte.ERel lExp (Latte.OverloadedNE Latte.Str _) rExp) = do
   lVar <- optimizeE $ compileE lExp
   rVar <- optimizeE $ compileE rExp
   if lVar == rVar then
-    return $ boolLiteral True
+    return $ boolLiteral False
   else do
-    var <- compileFunCallWithRegs (nameOfFunction Predefined.internalStringEq) [lVar, rVar]
-    t0 <- freshLocal (Predefined.llvmBool)
-    emitS $ Assigment t0 $ Op MO_Xor (VLit $ LInt 1 1) var
-    return t0
+    var <- compileFunCallWithRegs True (nameOfFunction Predefined.internalStringEq) [lVar, rVar]
+    getRegWith (Predefined.llvmBool) $ Op MO_Xor (VLit $ LInt 1 1) var
 
 compileE bExp@(Latte.EAnd _ _ _) = compileBExp bExp
 
@@ -735,10 +817,8 @@ compileBExp exp = do
       emitBranch lCont
       sealBlock lCont
       freshBlock lCont
-      t0 <- freshLocal Predefined.llvmBool
       let phi = Phi (Predefined.llvmBool) [(VLit (LInt 1 1), lTrue), (VLit (LInt 1 0), lFalse)]
-      emitS $ Assigment t0 $ phi
-      return t0
+      getRegWith Predefined.llvmBool phi
 
 
 compileBool :: Latte.Expr -> Var -> Var -> FCompilation Var
@@ -787,23 +867,21 @@ compileAOp moOp lExp rExp = do
   peepholeOp moOp tl tr
 
 
-compileFunCall :: Ident -> [Latte.Expr] -> FCompilation Var
-compileFunCall ident exps = do
+compileFunCall :: Bool -> Ident -> [Latte.Expr] -> FCompilation Var
+compileFunCall enumerable ident exps = do
   rVars <- mapM (\exp -> optimizeE $ compileE exp) exps
-  compileFunCallWithRegs ident rVars
+  compileFunCallWithRegs enumerable ident rVars
 
 
-compileFunCallWithRegs :: Ident -> [Var] -> FCompilation Var
-compileFunCallWithRegs ident rVars = do
+compileFunCallWithRegs ::Bool -> Ident -> [Var] -> FCompilation Var
+compileFunCallWithRegs enumerable ident rVars = do
   procGlobals <- envGetM getProcGlobals
   let functionVar = procGlobals Map.! ident
   if rTypeOfFunction functionVar == TVoid then do
-    emitS $ SExp $ Call functionVar rVars
+    emitS $ SExp $ Call enumerable functionVar rVars
     return $ VLit Null
   else do
-    t0 <- freshLocal (rTypeOfFunction functionVar)
-    emitS $ Assigment t0 $ Call functionVar rVars
-    return t0
+    getRegWith (rTypeOfFunction functionVar) $ Call enumerable functionVar rVars
 
 
 peepholeOp :: MachOp -> Var -> Var -> FCompilation Var
@@ -835,9 +913,7 @@ peepholeOp op (VLit (LInt p n)) (VLit (LInt _ m)) = return $ VLit $ LInt p (eval
     evalOp MO_Xor = \n m -> mod (n + m) 2
 
 peepholeOp op lVar rVar = do
-  t0 <- freshLocal Predefined.llvmInt
-  emitS $ Assigment t0 $ Op op lVar rVar
-  return t0
+  getRegWith Predefined.llvmInt $ Op op lVar rVar
 
 
 peepholeCmp :: CmpOp -> Var -> Var -> FCompilation Var
@@ -847,9 +923,7 @@ peepholeCmp op (VLit (LInt _ n)) (VLit (LInt _ m)) =
 peepholeCmp op lVar rVar | lVar == rVar = return $ boolLiteral True
 
 peepholeCmp op lVar rVar = do
-  t0 <- freshLocal (Predefined.llvmBool)
-  emitS $ Assigment t0 $ Cmp op lVar rVar
-  return t0
+  getRegWith (Predefined.llvmBool) $ Cmp op lVar rVar
 
 
 boolLiteral :: Bool -> Var

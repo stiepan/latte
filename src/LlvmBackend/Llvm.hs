@@ -65,9 +65,10 @@ data CmpOp = CMP_Eq | CMP_Ne | CMP_Sgt | CMP_Sge |
 
 
 data Expr = Alloca Integer Type | Op MachOp Var Var | Cmp CmpOp Var Var |
-  Load Var | GetElemPtr Bool Var [Var] | Call Var [Var] |
+  Load Var | GetElemPtr Bool Var [Var] | Call Bool Var [Var] |
   Phi Type [(Var, Var)] | Undefined deriving (Show, Eq, Ord)
   --BitCast Var Type
+  -- Bool for Call says if it can be eliminated in common subexpression removal
 
 
 data Statement = Assigment Var Expr | Branch Var | BranchIf Var Var Var |

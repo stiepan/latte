@@ -241,7 +241,7 @@ printExpr (Load var) = do
   emit ", "
   printRVar var
 
-printExpr (Call (VGlobal (GlobalVar (TFunction sig) _)) args) = do
+printExpr (Call _ (VGlobal (GlobalVar (TFunction sig) _)) args) = do
   emit "call "
   printSig (joinedM ", " (map printRVar args)) sig
 
