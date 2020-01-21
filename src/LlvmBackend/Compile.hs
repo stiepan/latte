@@ -492,7 +492,7 @@ compileS (Latte.BStmt block) = compileB block
 compileS (Latte.Decl t items) = mapM_ (compileSDecl t) items
 
 compileS (Latte.Ass pIdent exp) = do
-  rVar <- compileE exp
+  rVar <- optimizeE $ compileE exp
   loc <- getVariableLocation $ fst $ pIdent2Ident pIdent
   setLocalValAt rVar loc
 
@@ -501,7 +501,7 @@ compileS (Latte.Incr pIdent) = compileIncBy pIdent (LInt 32 1)
 compileS (Latte.Decr pIdent) = compileIncBy pIdent (LInt 32 (-1))
 
 compileS (Latte.Ret _ exp) = do
-  rVar <- compileE exp
+  rVar <- optimizeE $ compileE exp
   emitS $ Return $ Just rVar
 
 compileS (Latte.VRet _) = do
@@ -514,44 +514,63 @@ compileS (Latte.SExp exp) = do
 compileS (Latte.Cond _ exp stmt) = do
   lTrue <- freshLabel
   lCont <- freshLabel
-  compileBool exp lTrue lCont
-  sealBlock lTrue
-  freshBlock lTrue
-  compileS stmt
-  emitBranch lCont
-  sealBlock lCont
-  freshBlock lCont
+  cond <- optimizeE $ compileBool exp lTrue lCont
+  case cond of
+    VLit (LInt _ n) ->
+      case n of
+        0 -> return ()
+        _ -> compileS stmt
+    _ -> do
+      sealBlock lTrue
+      freshBlock lTrue
+      compileS stmt
+      emitBranch lCont
+      sealBlock lCont
+      freshBlock lCont
 
 compileS (Latte.CondElse _ exp tStmt _ fStmt) = do
   lTrue <- freshLabel
   lFalse <- freshLabel
   lCont <- freshLabel
-  compileBool exp lTrue lFalse
-  sealBlock lTrue
-  freshBlock lTrue
-  compileS tStmt
-  emitBranch lCont
-  sealBlock lFalse
-  freshBlock lFalse
-  compileS fStmt
-  emitBranch lCont
-  sealBlock lCont
-  freshBlock lCont
+  cond <- optimizeE $ compileBool exp lTrue lFalse
+  case cond of
+    VLit (LInt _ n) ->
+      case n of
+        0 -> compileS fStmt
+        _ -> compileS tStmt
+    _ -> do
+      sealBlock lTrue
+      freshBlock lTrue
+      compileS tStmt
+      emitBranch lCont
+      sealBlock lFalse
+      freshBlock lFalse
+      compileS fStmt
+      emitBranch lCont
+      sealBlock lCont
+      freshBlock lCont
 
 compileS (Latte.While _ exp stmt) = do
   condLabel <- freshLabel
   bodyLabel <- freshLabel
   contLabel <- freshLabel
-  emitBranch condLabel
-  freshBlock bodyLabel
-  compileS stmt
-  emitBranch condLabel
-  sealBlock condLabel
-  freshBlock condLabel
-  compileBool exp bodyLabel contLabel
-  freshBlock contLabel
-  sealBlock bodyLabel
-  sealBlock contLabel
+  cond <- optimizeE $ emitBranch condLabel >> freshBlock condLabel >> compileBool exp bodyLabel contLabel
+  case cond of
+    VLit (LInt _ 0) -> return ()
+    VLit (LInt _ _) -> do
+      emitBranch bodyLabel
+      freshBlock bodyLabel
+      compileS stmt
+      emitBranch bodyLabel
+      sealBlock bodyLabel
+    _ -> do
+      sealBlock bodyLabel
+      freshBlock bodyLabel
+      compileS stmt
+      emitBranch condLabel
+      sealBlock condLabel
+      freshBlock contLabel
+      sealBlock contLabel
 
 
 compileIncBy :: Latte.PIdent -> Lit -> FCompilation ()
@@ -571,7 +590,7 @@ compileSDecl t (Latte.NoInit pIdent) = compileSDecl t (Latte.Init pIdent (defaul
     defaultExp Latte.Str = Latte.EString ""
 
 compileSDecl t (Latte.Init pIdent exp) = do
-  rVar <- compileE exp
+  rVar <- optimizeE $ compileE exp
   location <- declareVar (latT2Llvm t) (fst $ pIdent2Ident pIdent)
   setLocalValAt rVar location
   return rVar
@@ -585,46 +604,16 @@ emitBranch jumpTo = do
 
 
 emitBranchIf :: Var -> Var -> Var -> FCompilation ()
-emitBranchIf cond lTrue lFalse = do
-  cBlock <- getCBlockM
-  let jumpFrom = var2Label $ getLabel cBlock
-  addBlockPred (var2Label lTrue) jumpFrom
-  addBlockPred (var2Label lFalse) jumpFrom
-  emitS $ BranchIf cond lTrue lFalse
-
-
-peepholeOp :: MachOp -> Var -> Var -> FCompilation Var
-peepholeOp op (VLit (LInt _ 0)) var | op == MO_Add || op == MO_Sub = return var
-
-peepholeOp op var (VLit (LInt _ 0)) | op == MO_Add || op == MO_Sub = return var
-
-peepholeOp op var (VLit (LInt _ 1)) | op == MO_Mul || op == MO_SDiv = return var
-
-peepholeOp MO_Mul (VLit (LInt _ 1)) var = return var
-
-peepholeOp MO_Mul (VLit (LInt p 0)) _ = return $ (VLit (LInt p 0))
-
-peepholeOp MO_Mul _ (VLit (LInt p 0)) = return $ (VLit (LInt p 0))
-
-peepholeOp MO_SDiv _ (VLit (LInt _ 0)) = fail "Division by zero"
-
-peepholeOp MO_Sub lVar rVar | lVar == rVar = return $ (VLit (LInt 32 0))
-
-peepholeOp op (VLit (LInt p n)) (VLit (LInt _ m)) = return $ VLit $ LInt p (evalOp op n m)
-  where
-    evalOp MO_Add = (+)
-    evalOp MO_Sub = (-)
-    evalOp MO_Mul = (*)
-    evalOp MO_SDiv = div
-    evalOp MO_SRem = mod
-    evalOp MO_And = (*)
-    evalOp MO_Or = \n m -> evalOp MO_Xor (evalOp MO_Xor n m) (evalOp MO_And n m)
-    evalOp MO_Xor = \n m -> mod (n + m) 2
-
-peepholeOp op lVar rVar = do
-  t0 <- freshLocal Predefined.llvmInt
-  emitS $ Assigment t0 $ Op op lVar rVar
-  return t0
+emitBranchIf cond lTrue lFalse =
+  case cond of
+    (VLit (LInt _ val)) ->
+      if val == 0 then emitBranch lFalse else emitBranch lTrue
+    _ -> do
+      cBlock <- getCBlockM
+      let jumpFrom = var2Label $ getLabel cBlock
+      addBlockPred (var2Label lTrue) jumpFrom
+      addBlockPred (var2Label lFalse) jumpFrom
+      emitS $ BranchIf cond lTrue lFalse
 
 
 -- todo assure optimal order of expression computation
@@ -650,10 +639,8 @@ compileE (Latte.EApp pIdent exps) =
   compileFunCall (fst $ pIdent2Ident pIdent) exps
 
 compileE (Latte.Neg _ exp) = do
-  rVar <- compileE exp
-  t0 <- freshLocal (Predefined.llvmInt)
-  emitS $ Assigment t0 $ Op MO_Sub (VLit $ LInt 32 0) rVar
-  return t0
+  rVar <- optimizeE $ compileE exp
+  peepholeOp MO_Sub (VLit $ LInt 32 0) rVar
 
 compileE (Latte.EMul lExp op rExp) = compileAOp (mulOp op) lExp rExp
   where
@@ -694,10 +681,15 @@ compileE (Latte.ERel lExp (Latte.OverloadedNE Latte.Bool _) rExp) =
   compileCmpOp CMP_Ne lExp rExp
 
 compileE (Latte.ERel lExp (Latte.OverloadedNE Latte.Str _) rExp) = do
-  rVar <- compileFunCall (nameOfFunction Predefined.internalStringEq) [lExp, rExp]
-  t0 <- freshLocal (Predefined.llvmBool)
-  emitS $ Assigment t0 $ Op MO_Xor (VLit $ LInt 1 1) rVar
-  return t0
+  lVar <- optimizeE $ compileE lExp
+  rVar <- optimizeE $ compileE rExp
+  if lVar == rVar then
+    return $ boolLiteral True
+  else do
+    var <- compileFunCallWithRegs (nameOfFunction Predefined.internalStringEq) [lVar, rVar]
+    t0 <- freshLocal (Predefined.llvmBool)
+    emitS $ Assigment t0 $ Op MO_Xor (VLit $ LInt 1 1) var
+    return t0
 
 compileE bExp@(Latte.EAnd _ _ _) = compileBExp bExp
 
@@ -711,66 +703,100 @@ compileBExp :: Latte.Expr -> FCompilation Var
 compileBExp exp = do
   lTrue <- freshLabel
   lFalse <- freshLabel
-  lCont <- freshLabel
-  compileBool exp lTrue lFalse
-  sealBlock lTrue
-  freshBlock lTrue
-  emitBranch lCont
-  sealBlock lFalse
-  freshBlock lFalse
-  emitBranch lCont
-  sealBlock lCont
-  freshBlock lCont
-  t0 <- freshLocal Predefined.llvmBool
-  let phi = Phi (Predefined.llvmBool) [(VLit (LInt 1 1), lTrue), (VLit (LInt 1 0), lFalse)]
-  emitS $ Assigment t0 $ phi
-  return t0
+  cond <- optimizeE $ compileBool exp lTrue lFalse
+  case cond of
+    VLit _ -> return cond
+    _ -> do
+      lCont <- freshLabel
+      sealBlock lTrue
+      freshBlock lTrue
+      emitBranch lCont
+      sealBlock lFalse
+      freshBlock lFalse
+      emitBranch lCont
+      sealBlock lCont
+      freshBlock lCont
+      t0 <- freshLocal Predefined.llvmBool
+      let phi = Phi (Predefined.llvmBool) [(VLit (LInt 1 1), lTrue), (VLit (LInt 1 0), lFalse)]
+      emitS $ Assigment t0 $ phi
+      return t0
 
 
-compileBool :: Latte.Expr -> Var -> Var -> FCompilation ()
+compileBool :: Latte.Expr -> Var -> Var -> FCompilation Var
 compileBool (Latte.EAnd expL _ expR) lTrue lFalse = do
   lMid <- freshLabel
-  compileBool expL lMid lFalse
-  sealBlock lMid
-  freshBlock lMid
-  compileBool expR lTrue lFalse
+  lVar <- optimizeE $ compileBool expL lMid lFalse
+  case lVar of
+    VLit (LInt _ 0) -> return lVar
+    VLit (LInt _ _) -> compileBool expR lTrue lFalse
+    _ -> do
+      sealBlock lMid
+      freshBlock lMid
+      rVar <- optimizeE $ compileBool expR lTrue lFalse
+      case rVar of
+        VLit (LInt _ 0) -> return rVar
+        VLit (LInt _ _) -> do
+          emitBranch lTrue -- optimize this dummy block out later on when the whole graph is generated
+          return lVar
+        _ -> return rVar
 
 compileBool (Latte.EOr expL _ expR) lTrue lFalse = do
   lMid <- freshLabel
-  compileBool expL lTrue lMid
-  sealBlock lMid
-  freshBlock lMid
-  compileBool expR lTrue lFalse
+  lVar <- optimizeE $ compileBool expL lTrue lMid
+  case lVar of
+    VLit (LInt _ 0) -> compileBool expR lTrue lFalse
+    VLit (LInt _ _) -> return lVar
+    _ -> do
+      sealBlock lMid
+      freshBlock lMid
+      rVar <- optimizeE $ compileBool expR lTrue lFalse
+      case rVar of
+        VLit (LInt _ 0) -> do
+          emitBranch lFalse -- optimize this dummy block out later on when the whole graph is generated
+          return lVar
+        VLit (LInt _ _) -> return rVar
+        _ -> return rVar
 
-compileBool (Latte.Not _ exp) lTrue lFalse = compileBool exp lFalse lTrue
+compileBool (Latte.Not _ exp) lTrue lFalse = do
+  var <- optimizeE $ compileBool exp lFalse lTrue
+  let nVar =
+        case var of
+          (VLit (LInt p n)) ->
+            case n of
+              0 -> VLit (LInt p 1)
+              _ -> VLit (LInt p 0)
+          _ -> var
+  return nVar
 
 compileBool expr lTrue lFalse = do
-  rVar <- compileE expr
+  rVar <- optimizeE $ compileE expr
   emitBranchIf rVar lTrue lFalse
+  return rVar
 
 
 compileCmpOp :: CmpOp -> Latte.Expr -> Latte.Expr -> FCompilation Var
 compileCmpOp cmpOp lExp rExp = do
-  tl <- compileE lExp
-  tr <- compileE rExp
-  t0 <- freshLocal (Predefined.llvmBool)
-  emitS $ Assigment t0 $ Cmp cmpOp tl tr
-  return t0
+  tl <- optimizeE $ compileE lExp
+  tr <- optimizeE $ compileE rExp
+  peepholeCmp cmpOp tl tr
 
 
 compileAOp :: MachOp -> Latte.Expr -> Latte.Expr -> FCompilation Var
 compileAOp moOp lExp rExp = do
-  tl <- compileE lExp
-  tr <- compileE rExp
-  t0 <- freshLocal (Predefined.llvmInt)
-  emitS $ Assigment t0 $ Op moOp tl tr
-  return t0
+  tl <- optimizeE $ compileE lExp
+  tr <- optimizeE $ compileE rExp
+  peepholeOp moOp tl tr
 
 
 compileFunCall :: Ident -> [Latte.Expr] -> FCompilation Var
 compileFunCall ident exps = do
+  rVars <- mapM (\exp -> optimizeE $ compileE exp) exps
+  compileFunCallWithRegs ident rVars
+
+
+compileFunCallWithRegs :: Ident -> [Var] -> FCompilation Var
+compileFunCallWithRegs ident rVars = do
   procGlobals <- envGetM getProcGlobals
-  rVars <- mapM compileE exps
   let functionVar = procGlobals Map.! ident
   if rTypeOfFunction functionVar == TVoid then do
     emitS $ SExp $ Call functionVar rVars
@@ -779,6 +805,90 @@ compileFunCall ident exps = do
     t0 <- freshLocal (rTypeOfFunction functionVar)
     emitS $ Assigment t0 $ Call functionVar rVars
     return t0
+
+
+peepholeOp :: MachOp -> Var -> Var -> FCompilation Var
+peepholeOp MO_Add (VLit (LInt _ 0)) var = return var
+
+peepholeOp op var (VLit (LInt _ 0)) | op == MO_Add || op == MO_Sub = return var
+
+peepholeOp op var (VLit (LInt _ 1)) | op == MO_Mul || op == MO_SDiv = return var
+
+peepholeOp MO_Mul (VLit (LInt _ 1)) var = return var
+
+peepholeOp MO_Mul (VLit (LInt p 0)) _ = return $ (VLit (LInt p 0))
+
+peepholeOp MO_Mul _ (VLit (LInt p 0)) = return $ (VLit (LInt p 0))
+
+peepholeOp MO_SDiv _ (VLit (LInt _ 0)) = fail "Division by zero"
+
+peepholeOp MO_Sub lVar rVar | lVar == rVar = return $ (VLit (LInt 32 0))
+
+peepholeOp op (VLit (LInt p n)) (VLit (LInt _ m)) = return $ VLit $ LInt p (evalOp op n m)
+  where
+    evalOp MO_Add = (+)
+    evalOp MO_Sub = (-)
+    evalOp MO_Mul = (*)
+    evalOp MO_SDiv = div
+    evalOp MO_SRem = mod
+    evalOp MO_And = (*)
+    evalOp MO_Or = \n m -> evalOp MO_Xor (evalOp MO_Xor n m) (evalOp MO_And n m)
+    evalOp MO_Xor = \n m -> mod (n + m) 2
+
+peepholeOp op lVar rVar = do
+  t0 <- freshLocal Predefined.llvmInt
+  emitS $ Assigment t0 $ Op op lVar rVar
+  return t0
+
+
+peepholeCmp :: CmpOp -> Var -> Var -> FCompilation Var
+peepholeCmp op (VLit (LInt _ n)) (VLit (LInt _ m)) =
+  return $ boolLiteral $ evalCmpOp op n m
+
+peepholeCmp op lVar rVar | lVar == rVar = return $ boolLiteral True
+
+peepholeCmp op lVar rVar = do
+  t0 <- freshLocal (Predefined.llvmBool)
+  emitS $ Assigment t0 $ Cmp op lVar rVar
+  return t0
+
+
+boolLiteral :: Bool -> Var
+boolLiteral True = VLit (LInt 1 1)
+boolLiteral False = VLit (LInt 1 0)
+
+
+evalCmpOp :: CmpOp -> Integer -> Integer -> Bool
+evalCmpOp CMP_Eq = (==)
+evalCmpOp CMP_Ne = (/=)
+evalCmpOp CMP_Sgt = (>)
+evalCmpOp CMP_Sge = (>=)
+evalCmpOp CMP_Slt = (<)
+evalCmpOp CMP_Sle = (<=)
+
+
+optimizeE :: FCompilation Var -> FCompilation Var
+optimizeE compilation = do
+  state <- lift get
+  let ((resVar, nBlocks), nState) = runState (runWriterT compilation) state
+  case resVar of
+    (VLit _) -> return resVar
+    (VLocal _ _) -> do
+      tell nBlocks
+      lift $ put nState
+      return resVar
+
+
+optimizeBE :: FCompilation (Var, Var, Var) -> FCompilation (Var, Var, Var)
+optimizeBE compilation = do
+  state <- lift get
+  let (((resVar, lT, lF), nBlocks), nState) = runState (runWriterT compilation) state
+  case resVar of
+    (VLit _) -> return ()
+    (VLocal _ _) -> do
+      tell nBlocks
+      lift $ put nState
+  return (resVar, lT, lF)
 
 
 typeOfVar :: Var -> Type

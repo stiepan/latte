@@ -190,6 +190,7 @@ printRVar (VLocal name t) = do
   printType t
   emitSs [" %", name]
 
+
 printRVar (VLit (LInt precision n)) = do
   let t = TInt precision
   printType t
@@ -198,6 +199,8 @@ printRVar (VLit (LInt precision n)) = do
 printRVar (VGlobal (GlobalVar t name)) = do
   printType t
   emitSs [" @", name]
+
+printRVar (VLit Null) = emit "void"
 
 
 printRVarVal :: Var -> Printing ()

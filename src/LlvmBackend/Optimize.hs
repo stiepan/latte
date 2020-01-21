@@ -17,8 +17,8 @@ essentialFunctionOpt (Func fSig aNames funcBody) =
   where
     nFuncBody = removeUnreachableBlocks $ map (foldr (.) id optimizations) funcBody
     optimizations = [
-      removeUnreachableCodeInBlock,
-      replaceBranchIfWithBranch
+      removeUnreachableCodeInBlock
+--      replaceBranchIfWithBranch
       ]
 
 

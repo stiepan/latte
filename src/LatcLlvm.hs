@@ -77,6 +77,7 @@ parseAndCheck programText baseName =
     Ok tree ->
       case Check.check tree of
         Right optimizedTree -> do
+          putStrLn $ show optimizedTree
           putStrLn "OK"
           return optimizedTree
         Left error -> do

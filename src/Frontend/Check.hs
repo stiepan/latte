@@ -12,6 +12,6 @@ import Common.Show
 check :: AbsLatte.Program -> Either SemanticError AbsLatte.Program
 check program = do
   overloadedProgram <- TypeCheck.check program
-  foldedProgram <- FoldExpr.optimizeByEval $ overloadedProgram
-  RequiredRetCheck.check foldedProgram
-  return foldedProgram
+--  foldedProgram <- FoldExpr.optimizeByEval $ overloadedProgram
+--  RequiredRetCheck.check foldedProgram
+  return overloadedProgram
