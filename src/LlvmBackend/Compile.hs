@@ -723,52 +723,33 @@ compileBExp exp = do
 
 
 compileBool :: Latte.Expr -> Var -> Var -> FCompilation Var
-compileBool (Latte.EAnd expL _ expR) lTrue lFalse = do
-  lMid <- freshLabel
-  lVar <- optimizeE $ compileBool expL lMid lFalse
-  case lVar of
-    VLit (LInt _ 0) -> return lVar
-    VLit (LInt _ _) -> compileBool expR lTrue lFalse
-    _ -> do
-      sealBlock lMid
-      freshBlock lMid
-      rVar <- optimizeE $ compileBool expR lTrue lFalse
-      case rVar of
-        VLit (LInt _ 0) -> return rVar
-        VLit (LInt _ _) -> do
-          emitBranch lTrue -- optimize this dummy block out later on when the whole graph is generated
-          return lVar
-        _ -> return rVar
-
-compileBool (Latte.EOr expL _ expR) lTrue lFalse = do
-  lMid <- freshLabel
-  lVar <- optimizeE $ compileBool expL lTrue lMid
-  case lVar of
-    VLit (LInt _ 0) -> compileBool expR lTrue lFalse
-    VLit (LInt _ _) -> return lVar
-    _ -> do
-      sealBlock lMid
-      freshBlock lMid
-      rVar <- optimizeE $ compileBool expR lTrue lFalse
-      case rVar of
-        VLit (LInt _ 0) -> do
-          emitBranch lFalse -- optimize this dummy block out later on when the whole graph is generated
-          return lVar
-        VLit (LInt _ _) -> return rVar
-        _ -> return rVar
-
-compileBool (Latte.Not _ exp) lTrue lFalse = do
-  var <- optimizeE $ compileBool exp lFalse lTrue
-  let nVar =
-        case var of
-          (VLit (LInt p n)) ->
-            case n of
-              0 -> VLit (LInt p 1)
-              _ -> VLit (LInt p 0)
-          _ -> var
-  return nVar
-
 compileBool expr lTrue lFalse = do
+  sExpr <- foldBoolean expr
+  trace (show expr ++ " \n " ++ (show sExpr) ++ "\n\n\n") (return ())
+  case sExpr of
+    Latte.ELitTrue -> return $ VLit (LInt 1 1)
+    Latte.ELitFalse -> return $ VLit (LInt 1 0)
+    _ -> compileFoldedBool sExpr lTrue lFalse
+
+
+compileFoldedBool :: Latte.Expr -> Var -> Var -> FCompilation Var
+compileFoldedBool (Latte.EAnd expL _ expR) lTrue lFalse = do
+  lMid <- freshLabel
+  compileFoldedBool expL lMid lFalse
+  sealBlock lMid
+  freshBlock lMid
+  compileFoldedBool expR lTrue lFalse
+
+compileFoldedBool (Latte.EOr expL _ expR) lTrue lFalse = do
+  lMid <- freshLabel
+  compileFoldedBool expL lTrue lMid
+  sealBlock lMid
+  freshBlock lMid
+  compileFoldedBool expR lTrue lFalse
+
+compileFoldedBool (Latte.Not _ exp) lTrue lFalse = compileFoldedBool exp lFalse lTrue
+
+compileFoldedBool expr lTrue lFalse = do
   rVar <- optimizeE $ compileE expr
   emitBranchIf rVar lTrue lFalse
   return rVar
@@ -879,16 +860,49 @@ optimizeE compilation = do
       return resVar
 
 
-optimizeBE :: FCompilation (Var, Var, Var) -> FCompilation (Var, Var, Var)
-optimizeBE compilation = do
+foldBoolean :: Latte.Expr -> FCompilation (Latte.Expr)
+foldBoolean expr = do
   state <- lift get
-  let (((resVar, lT, lF), nBlocks), nState) = runState (runWriterT compilation) state
-  case resVar of
-    (VLit _) -> return ()
-    (VLocal _ _) -> do
-      tell nBlocks
-      lift $ put nState
-  return (resVar, lT, lF)
+  let ((folded, _), _) = runState (runWriterT (booleanFolding expr)) state
+  return folded
+
+
+booleanFolding :: Latte.Expr -> FCompilation (Latte.Expr)
+booleanFolding (Latte.EAnd expL pos expR) = do
+  fL <- booleanFolding expL
+  fR <- booleanFolding expR
+  return $ case fL of
+    Latte.ELitFalse -> Latte.ELitFalse
+    Latte.ELitTrue -> fR
+    _ -> case fR of
+      Latte.ELitFalse -> Latte.ELitFalse
+      Latte.ELitTrue -> fL
+      _ -> (Latte.EAnd fL pos fR)
+
+booleanFolding (Latte.Not pos exp) = do
+  cond <- booleanFolding exp
+  return $ case cond of
+    Latte.ELitFalse -> Latte.ELitTrue
+    Latte.ELitTrue -> Latte.ELitFalse
+    _ -> Latte.Not pos cond
+
+booleanFolding (Latte.EOr expL pos expR) = do
+  fL <- booleanFolding expL
+  fR <- booleanFolding expR
+  return $ case fL of
+    Latte.ELitTrue -> Latte.ELitTrue
+    Latte.ELitFalse -> fR
+    _ -> case fR of
+      Latte.ELitTrue -> Latte.ELitTrue
+      Latte.ELitFalse -> fL
+      _ -> (Latte.EOr fL pos fR)
+
+booleanFolding expr = do
+  var <- compileE expr
+  return $ case var of
+    (VLit (LInt _ 0)) -> Latte.ELitFalse
+    (VLit (LInt _ _)) -> Latte.ELitTrue
+    _ -> expr
 
 
 typeOfVar :: Var -> Type
